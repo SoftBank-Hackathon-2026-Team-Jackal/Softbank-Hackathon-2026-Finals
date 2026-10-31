@@ -258,61 +258,7 @@ a { color: var(--accent); }
 </section>
 
 <section>
-  <h2><span class="n">04</span>왜 Debezium이 아닌가</h2>
-  <p>두 방식 모두 복제 슬롯과 논리 디코딩으로 변경을 읽습니다. 차이는 읽은 변경을 어디로 보내느냐입니다.</p>
-  <figure>
-    <div class="scroll">
-    <svg viewBox="0 0 780 160" role="img" aria-label="논리 복제는 pg-a에서 pg-b로 직접 스트림을 보내고, Debezium은 Debezium, Kafka, JDBC Sink를 거쳐 pg-b에 쓴다">
-      <defs>
-        <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
-        <marker id="a3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
-      </defs>
-      <g font-family="IBM Plex Sans KR, sans-serif" font-size="12.5" fill="currentColor" text-anchor="middle">
-        <text x="10" y="44" text-anchor="start" font-weight="600" fill="var(--accent)">논리 복제 (채택)</text>
-        <rect x="160" y="22" width="90" height="36" rx="5" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
-        <text x="205" y="45">pg-a</text>
-        <rect x="660" y="22" width="90" height="36" rx="5" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
-        <text x="705" y="45">pg-b</text>
-        <line x1="250" y1="40" x2="658" y2="40" stroke="var(--accent)" stroke-width="2" marker-end="url(#a3a)"/>
-        <text x="455" y="33" font-size="11.5" fill="var(--accent)">WAL 스트림 · 추가 구성 요소 없음</text>
-
-        <text x="10" y="124" text-anchor="start" font-weight="600">Debezium (대안)</text>
-        <rect x="160" y="102" width="90" height="36" rx="5" fill="var(--surface)" stroke="currentColor"/>
-        <text x="205" y="125">pg-a</text>
-        <rect x="285" y="102" width="95" height="36" rx="5" fill="none" stroke="currentColor" stroke-dasharray="4 3"/>
-        <text x="332" y="125">Debezium</text>
-        <rect x="415" y="102" width="80" height="36" rx="5" fill="none" stroke="currentColor" stroke-dasharray="4 3"/>
-        <text x="455" y="125">Kafka</text>
-        <rect x="530" y="102" width="95" height="36" rx="5" fill="none" stroke="currentColor" stroke-dasharray="4 3"/>
-        <text x="577" y="125">JDBC Sink</text>
-        <rect x="660" y="102" width="90" height="36" rx="5" fill="var(--surface)" stroke="currentColor"/>
-        <text x="705" y="125">pg-b</text>
-        <line x1="250" y1="120" x2="283" y2="120" stroke="currentColor" marker-end="url(#a3)"/>
-        <line x1="380" y1="120" x2="413" y2="120" stroke="currentColor" marker-end="url(#a3)"/>
-        <line x1="495" y1="120" x2="528" y2="120" stroke="currentColor" marker-end="url(#a3)"/>
-        <line x1="625" y1="120" x2="658" y2="120" stroke="currentColor" marker-end="url(#a3)"/>
-        <text x="455" y="154" font-size="11" opacity=".7">점선 = 추가로 띄우고 운영해야 하는 구성 요소</text>
-      </g>
-    </svg>
-    </div>
-    <figcaption>PostgreSQL에서 PostgreSQL로 옮기는 MVP에서는 중간 단계가 없는 논리 복제가 단순하고 안정적입니다.</figcaption>
-  </figure>
-  <div class="scroll" style="margin-top:16px">
-  <table>
-    <thead><tr><th></th><th>PostgreSQL 논리 복제</th><th>Debezium + Kafka</th></tr></thead>
-    <tbody>
-      <tr><td>추가로 띄울 것</td><td>없음</td><td>Kafka, Kafka Connect, Source/Sink 커넥터</td></tr>
-      <tr><td>트랜잭션 단위</td><td>트랜잭션 단위로 순서대로 적용</td><td>Sink 커넥터에서 트랜잭션 경계가 흐려지기 쉬움</td></tr>
-      <tr><td>초기 복사 + CDC 경계</td><td>자동으로 맞춰짐</td><td>스냅샷 모드로 지원되지만 Sink 설정 필요</td></tr>
-      <tr><td>역방향 복제 (롤백)</td><td>구독 하나 추가</td><td>파이프라인을 반대로 하나 더 구성</td></tr>
-      <tr><td>이종 대상 (MySQL, BigQuery 등)</td><td>불가능</td><td><b>가능</b> → 확장할 때 재검토</td></tr>
-    </tbody>
-  </table>
-  </div>
-</section>
-
-<section>
-  <h2><span class="n">05</span>덤프와 CDC를 잇는 두 가지 방법</h2>
+  <h2><span class="n">04</span>덤프와 CDC를 잇는 두 가지 방법</h2>
   <div class="two">
     <div class="panel">
       <h3><span class="tag in">방법 A · MVP 채택</span></h3>
@@ -366,7 +312,7 @@ CREATE SUBSCRIPTION mig_sub ...
 </section>
 
 <section>
-  <h2><span class="n">06</span>전환 (switchover)</h2>
+  <h2><span class="n">05</span>전환 (switchover)</h2>
   <ol class="seq">
     <li><span class="no pause">1</span><div><div class="what">쓰기 일시 정지</div><div class="cmd">PgBouncer: PAUSE app</div><div class="why">새 트랜잭션을 대기시킵니다. 연결은 유지되므로 앱에는 에러가 나지 않고 잠깐 느려질 뿐입니다. <code>pool_mode = transaction</code>이어야 빨리 끝납니다.</div></div></li>
     <li><span class="no">2</span><div><div class="what">마지막 변경 도착 확인</div><div class="cmd">pg-a에 marker 행 INSERT → pg-b에 나타날 때까지 대기</div><div class="why">변경은 커밋 순서대로 전달되므로 marker가 도착했다면 그 앞의 변경도 모두 도착한 것입니다. 지연량 숫자는 피드백 주기 때문에 늦게 갱신될 수 있습니다.</div></div></li>
@@ -378,7 +324,7 @@ CREATE SUBSCRIPTION mig_sub ...
 </section>
 
 <section>
-  <h2><span class="n">07</span>복제되지 않는 것과 운영상 주의점</h2>
+  <h2><span class="n">06</span>복제되지 않는 것과 운영상 주의점</h2>
   <div class="scroll">
   <table>
     <thead><tr><th>항목</th><th>대응</th></tr></thead>
@@ -395,7 +341,7 @@ CREATE SUBSCRIPTION mig_sub ...
 </section>
 
 <section>
-  <h2><span class="n">08</span>PoC 계획</h2>
+  <h2><span class="n">07</span>PoC 계획</h2>
   <div class="scroll">
   <table>
     <thead><tr><th>지표</th><th>성공 기준</th></tr></thead>
