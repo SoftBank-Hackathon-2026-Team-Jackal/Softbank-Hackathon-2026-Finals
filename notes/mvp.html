@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beyond Lock-In MVP 설계</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a single engineering-spec column; diagrams break wider, tables scan fast. */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --ink: #18202c;
+  --muted: #5b6676;
+  --line: #d8dee7;
+  --accent: #2448c9;
+  --accent-soft: #e6ebfb;
+  --signal: #c2410c;
+  --good: #15803d;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10141b;
+    --surface: #171c25;
+    --ink: #e6eaf1;
+    --muted: #97a1b0;
+    --line: #2b3340;
+    --accent: #7d9bff;
+    --accent-soft: #1d2640;
+    --signal: #fb923c;
+    --good: #4ade80;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10141b;
+  --surface: #171c25;
+  --ink: #e6eaf1;
+  --muted: #97a1b0;
+  --line: #2b3340;
+  --accent: #7d9bff;
+  --accent-soft: #1d2640;
+  --signal: #fb923c;
+  --good: #4ade80;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.7;
+}
+.wrap { max-width: 920px; margin: 0 auto; padding: 40px 20px 80px; display: grid; gap: 40px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font-family: var(--font-mono); font-size: 13px; color: var(--muted); letter-spacing: .02em; }
+h1 { margin: 0; font-size: 34px; line-height: 1.25; font-weight: 700; text-wrap: balance; }
+h2 { margin: 0 0 14px; font-size: 22px; line-height: 1.35; font-weight: 700; text-wrap: balance; display: flex; gap: 10px; align-items: baseline; }
+h2 .n { font-family: var(--font-mono); font-size: 14px; color: var(--accent); font-weight: 500; }
+h3 { margin: 22px 0 8px; font-size: 17px; font-weight: 600; }
+p { margin: 0 0 10px; max-width: 68ch; }
+.lede { font-size: 18px; max-width: 64ch; }
+.principle {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 12px 16px;
+  border-radius: 0 6px 6px 0;
+  font-weight: 500;
+  max-width: 68ch;
+}
+section { display: block; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
+.panel h3 { margin-top: 0; }
+.panel ul { margin: 0; padding-left: 18px; }
+.panel li { margin: 4px 0; }
+.tag { display: inline-block; font-family: var(--font-mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.tag.in { color: var(--good); }
+.tag.out { color: var(--muted); }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; color: var(--muted); font-size: 13px; background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td code, p code, li code { font-family: var(--font-mono); font-size: 13px; background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px; display: grid; gap: 10px; }
+figure .scroll svg { display: block; width: 100%; min-width: 640px; height: auto; color: var(--ink); }
+figcaption { font-size: 14px; color: var(--muted); }
+ol.steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; max-width: 70ch; }
+ol.steps li::marker { font-family: var(--font-mono); color: var(--accent); }
+.demo { display: grid; gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.demo-row { display: grid; grid-template-columns: 84px 1fr; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.demo-row:last-child { border-bottom: 0; }
+.demo-row .t { font-family: var(--font-mono); font-size: 13px; color: var(--accent); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.demo-row b { font-weight: 600; }
+.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.checks li { display: grid; grid-template-columns: 20px 1fr; gap: 8px; }
+.checks li::before { content: ""; width: 14px; height: 14px; margin-top: 6px; border: 1.5px solid var(--muted); border-radius: 3px; }
+.date { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.note { font-size: 14px; color: var(--muted); }
+a { color: var(--accent); }
+@media (max-width: 640px) {
+  h1 { font-size: 27px; }
+  .two { grid-template-columns: 1fr; }
+  .demo-row { grid-template-columns: 1fr; gap: 2px; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+
+<header>
+  <div class="eyebrow">SoftBank Hackathon 2026 본선 · MVP 설계 초안 v0.2 · 2026-10-31</div>
+  <h1>Beyond Lock-In MVP 설계</h1>
+  <p class="lede">가동 중인 웹 앱을 스캔해 지도로 만들고, 도메인별 Skill이 이전 계획을 세우고, 샌드박스에서 검증해 승인받으면, 트래픽과 DB(dump + CDC)까지 무중단으로 다른 환경에 옮기는 플랫폼입니다.</p>
+  <p class="principle">가볍게 만들되, 한 경로는 끝까지 실제로 동작하게 합니다. 넓이보다 깊이를 우선합니다.</p>
+</header>
+
+<section>
+  <h2><span class="n">01</span>MVP 범위</h2>
+  <div class="two">
+    <div class="panel">
+      <h3><span class="tag in">포함</span></h3>
+      <ul>
+        <li>대표 경로 하나: 환경 A의 VM → 환경 B의 VM (다른 클라우드 또는 온프레미스 PC)</li>
+        <li>예선 앱 재사용: 컨테이너 1개 + PostgreSQL 16</li>
+        <li>양쪽 모두 VM에 직접 띄운 PostgreSQL, 논리 복제로 CDC</li>
+        <li>WireGuard 메시로 환경 간 사설망</li>
+        <li>HAProxy 가중치 전환 + DB 앞단 PgBouncer</li>
+        <li>보안은 읽기 전용 점검과 시각화</li>
+        <li>Skill 기반 계획 + 샌드박스 코드 수정·테스트</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3><span class="tag out">제외 · 확장 후보</span></h3>
+      <ul>
+        <li>관리형 DB(RDS, Cloud SQL) 이전: 설정 차이만 문서화</li>
+        <li>이종 DB 엔진, 오브젝트 스토리지, AI 리소스 이전</li>
+        <li>비용 최적화</li>
+        <li>보안 문제의 자동 수정</li>
+        <li>3개 이상 환경의 동시 관리</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">02</span>전체 흐름</h2>
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 770 190" role="img" aria-label="Scan에서 Approve까지 AI가 계획과 검증을 하고, 사람이 승인하면 Provision부터 Verify/Rollback까지 실행된다">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+      </defs>
+      <g font-family="IBM Plex Sans KR, sans-serif" font-size="13" text-anchor="middle" fill="currentColor">
+        <text x="10" y="14" text-anchor="start" font-size="11.5" opacity=".65">계획과 검증 (AI)</text>
+        <rect x="10" y="24" width="125" height="46" rx="6" fill="none" stroke="currentColor" opacity=".9"/>
+        <text x="72" y="52">Scan</text>
+        <rect x="165" y="24" width="125" height="46" rx="6" fill="none" stroke="currentColor"/>
+        <text x="227" y="45">Map</text><text x="227" y="62" font-size="11" opacity=".7">공통 모델</text>
+        <rect x="320" y="24" width="125" height="46" rx="6" fill="none" stroke="currentColor"/>
+        <text x="382" y="45">Plan</text><text x="382" y="62" font-size="11" opacity=".7">Skills + DAG</text>
+        <rect x="475" y="24" width="125" height="46" rx="6" fill="none" stroke="currentColor"/>
+        <text x="537" y="45">Rehearse</text><text x="537" y="62" font-size="11" opacity=".7">샌드박스</text>
+        <rect x="630" y="24" width="130" height="46" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+        <text x="695" y="45" fill="var(--accent)" font-weight="600">Approve</text><text x="695" y="62" font-size="11" fill="var(--accent)">사람이 승인</text>
+        <line x1="135" y1="47" x2="163" y2="47" stroke="currentColor" marker-end="url(#ar)"/>
+        <line x1="290" y1="47" x2="318" y2="47" stroke="currentColor" marker-end="url(#ar)"/>
+        <line x1="445" y1="47" x2="473" y2="47" stroke="currentColor" marker-end="url(#ar)"/>
+        <line x1="600" y1="47" x2="628" y2="47" stroke="currentColor" marker-end="url(#ar)"/>
+        <polyline points="695,70 695,96 72,96 72,128" fill="none" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="390" y="90" font-size="11.5" fill="var(--accent)">승인 시 실행</text>
+        <text x="10" y="124" text-anchor="start" font-size="11.5" opacity=".65"></text>
+        <rect x="10" y="130" width="125" height="46" rx="6" fill="none" stroke="currentColor"/>
+        <text x="72" y="158">Provision</text>
+        <rect x="165" y="130" width="140" height="46" rx="6" fill="none" stroke="var(--signal)" stroke-width="1.5"/>
+        <text x="235" y="151">Phase A</text><text x="235" y="168" font-size="11" opacity=".75">트래픽 전환</text>
+        <rect x="335" y="130" width="160" height="46" rx="6" fill="none" stroke="var(--signal)" stroke-width="1.5"/>
+        <text x="415" y="151">Phase B</text><text x="415" y="168" font-size="11" opacity=".75">DB 전환 + 역방향 CDC</text>
+        <rect x="525" y="130" width="160" height="46" rx="6" fill="none" stroke="currentColor"/>
+        <text x="605" y="151">Verify</text><text x="605" y="168" font-size="11" opacity=".75">실패 시 Rollback</text>
+        <line x1="135" y1="153" x2="163" y2="153" stroke="currentColor" marker-end="url(#ar)"/>
+        <line x1="305" y1="153" x2="333" y2="153" stroke="currentColor" marker-end="url(#ar)"/>
+        <line x1="495" y1="153" x2="523" y2="153" stroke="currentColor" marker-end="url(#ar)"/>
+      </g>
+    </svg>
+    </div>
+    <figcaption>윗줄은 AI가 계획하고 샌드박스에서 검증하는 단계이고, 아랫줄은 사람이 승인한 뒤에만 실행됩니다. 주황색 테두리가 무중단 이전의 핵심 단계입니다.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2><span class="n">03</span>구성 요소</h2>
+
+  <h3>Scanner</h3>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>입력 소스</th><th>수집하는 것</th></tr></thead>
+    <tbody>
+      <tr><td>클라우드 API (VM 목록, 방화벽 규칙)</td><td>인스턴스, 공개 IP, 열린 포트</td></tr>
+      <tr><td>SSH + <code>docker inspect</code></td><td>실행 중인 컨테이너, 이미지, 환경 변수 이름, 포트</td></tr>
+      <tr><td>PostgreSQL 카탈로그 (<code>precheck.sql</code>)</td><td>버전, <code>wal_level</code>, 테이블별 PK 유무, 시퀀스, 확장, DB 크기</td></tr>
+      <tr><td>소스 코드 (import·호출 패턴 검색)</td><td>클라우드 SDK 의존성 (<code>boto3</code>, <code>@aws-sdk/*</code>, <code>google-cloud-*</code> 등)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Map: 클라우드 중립 공통 모델 (최소 스키마)</h3>
+<pre>environments:
+  - { id: env-a, kind: cloud, provider: aws }     # kind: cloud | onprem
+resources:
+  - id: app-web
+    type: compute.container
+    env: env-a
+    attrs: { image: "app:1.4", port: 8080, env_keys: [DATABASE_URL, S3_BUCKET] }
+  - id: app-db
+    type: db.postgres
+    env: env-a
+    attrs: { version: 16, wal_level: replica, size_mb: 120, tables_without_pk: [audit_log] }
+edges:
+  - { from: app-web, to: app-db, kind: connects }
+findings:                                         # 보안 시각화에 사용
+  - { resource: app-db, rule: db-public-port, severity: high }</pre>
+
+  <h3>Skills (MVP 5개)</h3>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Skill</th><th>판단 (LLM)</th><th>실행 (검증된 스크립트)</th></tr></thead>
+    <tbody>
+      <tr><td><code>db-postgres</code></td><td>사전 점검 결과 해석, 위험 식별 (PK 없는 테이블 등), 대상 사양</td><td><code>precheck.sql</code>, <code>start_replication.sh</code>, <code>check_lag.sql</code>, <code>verify_checksum.py</code>, <code>switchover.sh</code>, <code>reverse_replication.sh</code></td></tr>
+      <tr><td><code>compute</code></td><td>대상 VM 사양, 환경 변수 매핑, 헬스 체크 경로</td><td>Terraform 모듈, <code>deploy_container.sh</code>, <code>healthcheck.sh</code></td></tr>
+      <tr><td><code>network-wireguard</code></td><td>주소 대역, 피어 구성, 방화벽 규칙, 트래픽 전환 단계와 롤백 조건</td><td><code>wg_keygen.sh</code>, <code>wg0.conf</code> 템플릿, <code>haproxy_set_weight.sh</code></td></tr>
+      <tr><td><code>security-iam</code></td><td>보안 기준선 평가, 이전 전후 비교</td><td><code>baseline_check.py</code> (공개 포트, TLS, 권한, 평문 시크릿)</td></tr>
+      <tr><td><code>app-code-adapter</code></td><td>클라우드 SDK 호출을 찾아 대상 환경에 맞는 수정안 작성</td><td>샌드박스에서 테스트 실행</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="principle" style="margin-top:14px">판단은 LLM이 하고, 순서가 중요한 실행은 검증된 스크립트가 합니다. 이것이 “AI에게 어디까지 맡길 수 있는가”에 대한 팀의 답입니다.</p>
+
+  <h3>계획 조각 공통 계약</h3>
+<pre>domain: db
+mapping:   [{ from: env-a/app-db, to: env-b/app-db, reason: "..." }]
+prechecks: [{ id: wal-level, check: "SHOW wal_level = logical" }]
+requires:  [network.tunnel(env-a, env-b)]       # 다른 도메인에 요구
+provides:  [db.endpoint(env-b)]                  # 다른 도메인에 제공
+steps:
+  - { id: db-replicate, depends_on: [network.tunnel-up],
+      action: ..., verify: ..., rollback: ... }  # 모든 단계는 검증·롤백과 짝
+risks: ["audit_log에 PK 없음 → REPLICA IDENTITY FULL 필요"]</pre>
+
+  <h3>Orchestrator · Rehearse · Approve · Executor</h3>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>구성 요소</th><th>역할</th></tr></thead>
+    <tbody>
+      <tr><td>Orchestrator</td><td>Map을 도메인별로 나눠 Skill에 전달하고, 계획 조각을 <code>requires</code>/<code>provides</code>로 연결해 DAG로 만든 뒤 위상 정렬합니다. 짝 없는 요구, 순환 의존, 상충하는 계획이 있으면 해당 Skill에 재계획을 요청합니다.</td></tr>
+      <tr><td>Rehearse</td><td>대상 환경을 흉내 낸 격리 컨테이너에서 앱을 새 설정으로 띄우고, <code>app-code-adapter</code>가 수정한 코드로 테스트를 돌립니다. 실패하면 횟수 제한 안에서 수정을 반복합니다.</td></tr>
+      <tr><td>Approve UI</td><td>Map(보안 점검 결과를 색으로 표시), 실행 DAG, Skill별 근거, 코드 diff, 위험 목록을 보여 주고 승인 또는 거절을 받습니다.</td></tr>
+      <tr><td>Executor</td><td>DAG 순서대로 <code>action</code>과 <code>verify</code>를 실행합니다. 실패하면 이미 실행한 단계의 <code>rollback</code>을 역순으로 실행하고, 모든 로그를 UI에 실시간으로 표시합니다.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">04</span>네트워크와 데이터 이전</h2>
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 770 300" role="img" aria-label="사용자 트래픽은 env-a의 HAProxy가 가중치로 나누고, env-b 앱은 Phase A 동안 WireGuard를 거쳐 env-a의 PgBouncer를 쓰며, 두 PostgreSQL은 논리 복제로 동기화된다">
+      <defs>
+        <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="ar2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+        <marker id="ar2s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--signal)"/></marker>
+      </defs>
+      <g font-family="IBM Plex Sans KR, sans-serif" font-size="12.5" fill="currentColor">
+        <!-- tunnel band -->
+        <rect x="375" y="14" width="90" height="276" fill="var(--accent-soft)" stroke="none"/>
+        <text x="420" y="34" text-anchor="middle" font-size="11.5" fill="var(--accent)" font-weight="600">WireGuard</text>
+        <text x="420" y="50" text-anchor="middle" font-size="11" fill="var(--accent)">10.100.0.0/24</text>
+        <text x="420" y="282" text-anchor="middle" font-size="11" fill="var(--accent)">UDP 51820</text>
+        <!-- env boxes -->
+        <rect x="95" y="14" width="280" height="276" rx="8" fill="none" stroke="currentColor" opacity=".55"/>
+        <text x="107" y="34" font-weight="600">env-a · 기존</text>
+        <text x="107" y="50" font-size="11" opacity=".7">10.100.0.1</text>
+        <rect x="465" y="14" width="290" height="276" rx="8" fill="none" stroke="currentColor" opacity=".55"/>
+        <text x="477" y="34" font-weight="600">env-b · 대상</text>
+        <text x="477" y="50" font-size="11" opacity=".7">10.100.0.2</text>
+        <!-- users -->
+        <text x="8" y="80" font-size="12">사용자</text>
+        <text x="8" y="96" font-size="12">트래픽</text>
+        <line x1="52" y1="84" x2="113" y2="84" stroke="currentColor" marker-end="url(#ar2)"/>
+        <!-- env-a nodes -->
+        <rect x="115" y="66" width="110" height="36" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="170" y="89" text-anchor="middle">HAProxy</text>
+        <rect x="115" y="140" width="110" height="36" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="170" y="163" text-anchor="middle">app (기존)</text>
+        <rect x="250" y="140" width="110" height="36" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="305" y="163" text-anchor="middle">PgBouncer</text>
+        <rect x="235" y="222" width="125" height="40" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="297" y="239" text-anchor="middle">PostgreSQL 16</text>
+        <text x="297" y="255" text-anchor="middle" font-size="11" opacity=".7">publisher</text>
+        <!-- env-b nodes -->
+        <rect x="560" y="140" width="110" height="36" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="615" y="163" text-anchor="middle">app (신규)</text>
+        <rect x="480" y="222" width="125" height="40" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="542" y="239" text-anchor="middle">PostgreSQL 16</text>
+        <text x="542" y="255" text-anchor="middle" font-size="11" opacity=".7">subscriber</text>
+        <!-- arrows -->
+        <line x1="170" y1="102" x2="170" y2="138" stroke="currentColor" marker-end="url(#ar2)"/>
+        <text x="178" y="125" font-size="11" opacity=".75">100 − w %</text>
+        <polyline points="225,84 615,84 615,138" fill="none" stroke="var(--signal)" stroke-width="1.5" marker-end="url(#ar2s)"/>
+        <text x="490" y="77" font-size="11.5" fill="var(--signal)">w % (10 → 50 → 100)</text>
+        <line x1="225" y1="154" x2="248" y2="154" stroke="currentColor" marker-end="url(#ar2)"/>
+        <line x1="560" y1="166" x2="362" y2="166" stroke="currentColor" stroke-dasharray="5 4" marker-end="url(#ar2)"/>
+        <text x="478" y="186" font-size="11" text-anchor="middle" opacity=".8">Phase A: 기존 DB 사용</text>
+        <line x1="305" y1="176" x2="305" y2="220" stroke="currentColor" marker-end="url(#ar2)"/>
+        <line x1="360" y1="234" x2="478" y2="234" stroke="var(--accent)" stroke-width="2" marker-end="url(#ar2a)"/>
+        <text x="420" y="226" font-size="11" text-anchor="middle" fill="var(--accent)" font-weight="600">CDC</text>
+        <line x1="478" y1="252" x2="362" y2="252" stroke="var(--accent)" stroke-dasharray="5 4" marker-end="url(#ar2a)"/>
+        <text x="420" y="268" font-size="10.5" text-anchor="middle" fill="var(--accent)">역방향 (전환 후)</text>
+      </g>
+    </svg>
+    </div>
+    <figcaption>Phase A 동안 새 앱은 WireGuard를 거쳐 기존 DB를 쓰기 때문에 split-brain이 생기지 않습니다. DB는 논리 복제로 계속 따라잡다가 Phase B에서 한 번에 전환되고, 이후에는 역방향 복제가 롤백 경로를 유지합니다.</figcaption>
+  </figure>
+
+  <h3>WireGuard</h3>
+  <ul>
+    <li><code>network-wireguard</code> Skill이 키 쌍을 만들고 <code>wg0.conf</code>를 배포합니다.</li>
+    <li>PostgreSQL 5432 포트는 WireGuard 주소에서만 열고 공개 인터페이스에서는 닫습니다. 이 변화가 보안 지도에 그대로 반영됩니다.</li>
+    <li>온프레미스 PC가 NAT 뒤에 있으면 PC 쪽에 <code>PersistentKeepalive</code>를 설정해 먼저 연결을 엽니다.</li>
+  </ul>
+
+  <div class="two" style="margin-top:16px">
+    <div class="panel">
+      <h3>Phase A · 트래픽 전환</h3>
+      <ol class="steps">
+        <li>env-b에 앱을 띄우고, DB 연결은 env-a의 PgBouncer로 둡니다.</li>
+        <li>HAProxy 가중치를 10 → 50 → 100으로 올리며 단계마다 오류율과 지연을 확인합니다.</li>
+        <li>임계값을 넘으면 가중치를 즉시 되돌립니다.</li>
+      </ol>
+    </div>
+    <div class="panel">
+      <h3>Phase B · DB 전환</h3>
+      <ol class="steps">
+        <li>지연량 0, 행 수와 체크섬 일치를 확인합니다.</li>
+        <li>PgBouncer <code>PAUSE</code> → 정방향 구독 비활성화 → 시퀀스 동기화</li>
+        <li>역방향 복제를 만듭니다 (<code>copy_data = false</code>).</li>
+        <li>PgBouncer 대상을 env-b DB로 바꾸고 <code>RESUME</code>합니다.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">05</span>승인 화면 · Git · 대시보드</h2>
+  <p>승인 화면은 사람과 AI가 만나는 유일한 지점입니다. 대시보드는 보고 판단하고 실행을 지켜보는 화면이고, Git은 무엇을 왜 바꿨는지 남기는 장부입니다.</p>
+
+  <h3>승인자가 답을 얻어야 하는 질문</h3>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>승인자의 질문</th><th>보여 줄 방식</th></tr></thead>
+    <tbody>
+      <tr><td>무엇이 어떻게 바뀌는가?</td><td><b>Before / After 지도</b> (추가·변경·삭제를 색으로 표시)</td></tr>
+      <tr><td>어떤 순서로 실행되는가?</td><td><b>실행 DAG</b> (Skill별 레인, Phase 구분, 승인 게이트 표시)</td></tr>
+      <tr><td>왜 이렇게 바꾸는가?</td><td><b>매핑 표</b> (기존 → 대상, 담당 Skill, 근거)</td></tr>
+      <tr><td>무엇이 위험한가?</td><td><b>위험 표</b> (심각도, 대응 방법, 확인 체크)</td></tr>
+      <tr><td>실제로 검증했는가?</td><td><b>리허설 결과</b> (테스트 결과, 코드 diff)</td></tr>
+      <tr><td>문제가 생기면 되돌릴 수 있는가?</td><td>단계마다 <b>롤백 가능 여부</b> 표시</td></tr>
+      <tr><td>서비스가 얼마나 멈추는가?</td><td><b>요약 바</b> (예상 쓰기 중단 시간)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>승인 화면 와이어프레임</h3>
+<pre>┌─────────────────────────────────────────────────────────────────────┐
+│ env-a (AWS) → env-b (GCP)   쓰기 중단 예상 ~1초   롤백 가능 ●        │
+│ 리허설 통과 12/12   위험 High 1 · Med 2   계획 v3 (a91f…)            │
+├──────────────────────────────┬──────────────────────────────────────┤
+│  Before / After 지도          │  실행 DAG                             │
+│  [app]──[db 5432 공개]  →    │  network ─●─────────────────────      │
+│  [app]──[db 사설망] (초록)    │  db       ───●(복제)───────●(전환)    │
+│  + 추가  ~ 변경  − 삭제       │  compute  ──────●(기동)               │
+│                              │  traffic  ─────────●10→50→100%       │
+│                              │          ▲ 승인 게이트 1  ▲ 게이트 2   │
+├──────────────────────────────┴──────────────────────────────────────┤
+│ [매핑]  [위험 3]  [리허설 · 코드 diff]  [실행 로그]                    │
+├─────────────────────────────────────────────────────────────────────┤
+│ ☐ High 위험 1건을 확인했습니다          [거절]  [Phase A까지 승인]     │
+└─────────────────────────────────────────────────────────────────────┘</pre>
+  <ul>
+    <li><b>승인 게이트 2개:</b> 게이트 1은 Phase A 시작 전, 게이트 2는 Phase B(DB 전환) 직전입니다. 게이트 2에서는 실제 CDC 지연량과 체크섬 결과를 보고 다시 판단합니다.</li>
+    <li><b>High 위험은 확인 체크 필수:</b> 체크하지 않으면 승인 버튼이 비활성화됩니다.</li>
+    <li><b>승인은 계획 버전(커밋 해시)에 묶습니다.</b> 재계획되면 기존 승인은 무효가 됩니다.</li>
+    <li><b>표와 다이어그램은 구조화된 데이터를 그대로 렌더링합니다.</b> LLM은 맨 위의 짧은 자연어 요약만 작성하므로, 화면과 실제 실행 내용이 정확히 일치합니다.</li>
+  </ul>
+
+  <h3>Git: 계획과 승인의 장부</h3>
+<pre>migrations/2026-11-07-env-a-to-env-b/
+├── map.before.yaml        # Scanner 결과
+├── plan.yaml              # 오케스트레이터가 합친 DAG
+├── skills/                # Skill별 계획 조각
+├── terraform/             # 생성될 IaC
+├── runbook.md             # 계획에서 자동 생성한 사람용 런북
+└── rehearsal/             # 리허설 테스트 결과</pre>
+  <ul>
+    <li>계획이 만들어지면 이전 작업마다 브랜치와 PR을 만듭니다. 재계획은 새 커밋이므로 계획 버전이 곧 커밋 해시입니다.</li>
+    <li><code>app-code-adapter</code>가 고친 앱 코드는 앱 저장소에 별도 PR로 올립니다.</li>
+    <li>승인은 대시보드에서 하고, 플랫폼이 GitHub API로 PR 승인·병합과 승인 기록(승인자, 계획 해시, 시각)을 남깁니다.</li>
+    <li>실행은 Git에 맡기지 않고 Executor가 맡습니다.</li>
+  </ul>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>검토한 대안</th><th>채택하지 않은 이유</th></tr></thead>
+    <tbody>
+      <tr><td>GitHub PR 페이지에서 직접 승인</td><td>데모 화면이 두 곳으로 갈라지고, 승인용 표와 다이어그램을 보여 줄 수 없습니다.</td></tr>
+      <tr><td>GitHub Actions로 실행 (GitOps)</td><td>실행 상태를 실시간으로 보여 주기 어렵고, CDC 지연량을 보며 다음 단계로 넘어가는 판단을 넣기 어렵습니다.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>대시보드 화면</h3>
+  <p>최종 발표는 슬라이드가 금지되고 설계 문서와 데모로만 진행되므로, 대시보드가 사실상 발표 화면입니다.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>우선순위</th><th>화면</th><th>내용</th><th>데모 장면</th></tr></thead>
+    <tbody>
+      <tr><td><b>1</b></td><td>실시간 이전 현황</td><td>트래픽 가중치, CDC 지연량, p99 지연, 양쪽 DB 행 수, 단계별 실행 로그</td><td>가동 중인 앱의 이전</td></tr>
+      <tr><td><b>1</b></td><td>승인 화면</td><td>위의 구성</td><td>AI 샌드박스 점검·수정</td></tr>
+      <tr><td><b>2</b></td><td>Map</td><td>환경과 리소스 그래프, 보안 점검 결과를 색으로 표시</td><td>보안 시각화</td></tr>
+      <tr><td>3</td><td>개요</td><td>환경별 상태와 보안 점수 카드</td><td></td></tr>
+      <tr><td>3</td><td>이력</td><td>지난 이전 작업 목록, 각 작업의 Git PR 링크</td><td>거버넌스</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note" style="margin-top:10px">백엔드가 HAProxy 통계, <code>pg_stat_*</code> 뷰, Executor 로그를 수집해 SSE나 WebSocket으로 전송합니다. 우선순위 1인 두 화면을 먼저 완성합니다.</p>
+</section>
+
+<section>
+  <h2><span class="n">06</span>데모 시나리오 (3분)</h2>
+  <div class="demo">
+    <div class="demo-row"><div class="t">0:00</div><div><b>상황 제시.</b> “env-a 요금이 인상되었다. 서비스를 멈추지 않고 env-b로 옮긴다.”</div></div>
+    <div class="demo-row"><div class="t">0:20</div><div><b>Scan + Map.</b> 지도에 리소스와 보안 점검 결과가 표시됩니다. DB 5432 공개가 빨간색으로 보입니다.</div></div>
+    <div class="demo-row"><div class="t">0:50</div><div><b>Plan + Rehearse.</b> Skill별 계획과 DAG, 샌드박스에서 AI가 SDK 호출을 고치고 테스트를 통과시키는 로그를 보여 줍니다.</div></div>
+    <div class="demo-row"><div class="t">1:30</div><div><b>Approve → 실행.</b> 부하 생성기가 쓰기를 계속 넣는 동안 트래픽 그래프가 0에서 100%로 넘어가고, CDC 지연 그래프와 PgBouncer 전환 순간의 짧은 지연 증가가 보입니다.</div></div>
+    <div class="demo-row"><div class="t">2:30</div><div><b>결과.</b> 보안 지도에서 DB가 사설망 전용으로 바뀌어 초록색이 되고, 롤백 버튼으로 되돌릴 수 있음을 설명합니다.</div></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">07</span>기술 스택 (가안)</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>영역</th><th>후보</th></tr></thead>
+    <tbody>
+      <tr><td>플랫폼 백엔드</td><td>Python (FastAPI) 또는 TypeScript. 예선 시스템에 맞춰 결정</td></tr>
+      <tr><td>AI 에이전트</td><td>Claude Agent SDK + Agent Skills</td></tr>
+      <tr><td>대시보드</td><td>예선 UI 확장, React Flow (지도·DAG), Monaco Diff Editor, SSE/WebSocket</td></tr>
+      <tr><td>계획·승인 기록</td><td>Git + GitHub API (브랜치, PR, 승인 기록)</td></tr>
+      <tr><td>IaC</td><td>Terraform</td></tr>
+      <tr><td>네트워크 · 트래픽</td><td>WireGuard, HAProxy (Runtime API로 가중치 변경), PgBouncer</td></tr>
+      <tr><td>DB</td><td>PostgreSQL 16 논리 복제</td></tr>
+      <tr><td>샌드박스</td><td>네트워크를 격리한 Docker 컨테이너</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">08</span>작업 순서 (본선 11/7까지)</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>기간</th><th>작업</th><th>완료 기준</th></tr></thead>
+    <tbody>
+      <tr><td class="date">11/1–11/2</td><td><b>CDC PoC</b>: Docker Compose로 PG 2대 + PgBouncer + 부하 생성기, 전환과 롤백 왕복. Map 스키마와 계획 조각 계약 확정</td><td>로컬에서 무중단 전환 성공</td></tr>
+      <tr><td class="date">11/2–11/3</td><td>WireGuard로 실제 두 환경을 연결하고 PoC를 VM 위에서 재현</td><td>환경 간 전환 성공</td></tr>
+      <tr><td class="date">11/3–11/5</td><td>Skill 5개 병렬 개발 (담당자별), Scanner, Orchestrator</td><td>계획 조각 출력, DAG 생성</td></tr>
+      <tr><td class="date">11/5–11/6</td><td>Rehearse, Git 기록, 대시보드(승인 화면 + 실시간 이전 현황), Executor 연결</td><td>처음부터 끝까지 한 번 동작</td></tr>
+      <tr><td class="date">11/6</td><td>데모 리허설, 설계 문서 정리</td><td>제출용 링크 준비</td></tr>
+      <tr><td class="date">11/7–11/8</td><td>현장 개발: 다듬기와 확장 (관리형 DB, 보안 자동 수정 등)</td><td>최종 데모</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">09</span>미결정 사항</h2>
+  <ul class="checks">
+    <li><span>대표 이전 경로의 env-a와 env-b를 실제로 무엇으로 할지 (예: AWS → GCP, AWS → 온프레미스 PC)</span></li>
+    <li><span>예선 시스템의 언어와 구조, 재사용 범위</span></li>
+    <li><span>Skill별 담당자</span></li>
+    <li><span>HAProxy 위치: env-a에 두면 env-a가 단일 장애 지점이 됩니다. MVP에서는 허용하고 한계로 명시합니다.</span></li>
+    <li><span>샌드박스 범위: 코드 테스트만 할지, 인프라 적용까지 흉내 낼지</span></li>
+  </ul>
+  <p class="note" style="margin-top:16px">관련 문서: 킥오프 자료 정리(<code>kickoff.md</code>), 아이디어 회의록(<code>notes/2026-10-31-ideation.md</code>)</p>
+</section>
+
+</main>
+</body>
+</html>
