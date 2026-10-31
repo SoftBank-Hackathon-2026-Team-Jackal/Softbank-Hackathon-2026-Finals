@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDC 설계: PostgreSQL 논리 복제</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a single engineering-spec column; diagrams break wider, tables scan fast. */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --ink: #18202c;
+  --muted: #5b6676;
+  --line: #d8dee7;
+  --accent: #2448c9;
+  --accent-soft: #e6ebfb;
+  --signal: #c2410c;
+  --good: #15803d;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10141b;
+    --surface: #171c25;
+    --ink: #e6eaf1;
+    --muted: #97a1b0;
+    --line: #2b3340;
+    --accent: #7d9bff;
+    --accent-soft: #1d2640;
+    --signal: #fb923c;
+    --good: #4ade80;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10141b;
+  --surface: #171c25;
+  --ink: #e6eaf1;
+  --muted: #97a1b0;
+  --line: #2b3340;
+  --accent: #7d9bff;
+  --accent-soft: #1d2640;
+  --signal: #fb923c;
+  --good: #4ade80;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.7;
+}
+.wrap { max-width: 920px; margin: 0 auto; padding: 40px 20px 80px; display: grid; gap: 40px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font-family: var(--font-mono); font-size: 13px; color: var(--muted); letter-spacing: .02em; }
+h1 { margin: 0; font-size: 34px; line-height: 1.25; font-weight: 700; text-wrap: balance; }
+h2 { margin: 0 0 14px; font-size: 22px; line-height: 1.35; font-weight: 700; text-wrap: balance; display: flex; gap: 10px; align-items: baseline; }
+h2 .n { font-family: var(--font-mono); font-size: 14px; color: var(--accent); font-weight: 500; }
+h3 { margin: 22px 0 8px; font-size: 17px; font-weight: 600; }
+p { margin: 0 0 10px; max-width: 68ch; }
+.lede { font-size: 18px; max-width: 64ch; }
+.principle {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 12px 16px;
+  border-radius: 0 6px 6px 0;
+  font-weight: 500;
+  max-width: 68ch;
+}
+section { display: block; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
+.panel h3 { margin-top: 0; }
+.panel ul { margin: 0; padding-left: 18px; }
+.panel li { margin: 4px 0; }
+.tag { display: inline-block; font-family: var(--font-mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.tag.in { color: var(--good); }
+.tag.out { color: var(--muted); }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; color: var(--muted); font-size: 13px; background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td code, p code, li code { font-family: var(--font-mono); font-size: 13px; background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px; display: grid; gap: 10px; }
+figure .scroll svg { display: block; width: 100%; min-width: 640px; height: auto; color: var(--ink); }
+figcaption { font-size: 14px; color: var(--muted); }
+ol.steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; max-width: 70ch; }
+ol.steps li::marker { font-family: var(--font-mono); color: var(--accent); }
+.demo { display: grid; gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.demo-row { display: grid; grid-template-columns: 84px 1fr; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.demo-row:last-child { border-bottom: 0; }
+.demo-row .t { font-family: var(--font-mono); font-size: 13px; color: var(--accent); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.demo-row b { font-weight: 600; }
+.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.checks li { display: grid; grid-template-columns: 20px 1fr; gap: 8px; }
+.checks li::before { content: ""; width: 14px; height: 14px; margin-top: 6px; border: 1.5px solid var(--muted); border-radius: 3px; }
+.date { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.note { font-size: 14px; color: var(--muted); }
+a { color: var(--accent); }
+@media (max-width: 640px) {
+  h1 { font-size: 27px; }
+  .two { grid-template-columns: 1fr; }
+  .demo-row { grid-template-columns: 1fr; gap: 2px; }
+}
+</style>
+<style>
+.decisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.decision { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 8px; padding: 14px 16px; display: grid; gap: 4px; align-content: start; }
+.decision .k { font-size: 13px; color: var(--muted); }
+.decision .v { font-weight: 600; line-height: 1.5; }
+.decision .s { font-size: 14px; color: var(--muted); line-height: 1.55; }
+.seq { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.seq li { display: grid; grid-template-columns: 44px 1fr; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.seq li:last-child { border-bottom: 0; }
+.seq .no { font-family: var(--font-mono); font-size: 13px; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; border: 1.5px solid var(--accent); color: var(--accent); }
+.seq .no.pause { border-color: var(--signal); color: var(--signal); }
+.seq .what { font-weight: 600; }
+.seq .cmd { font-family: var(--font-mono); font-size: 13px; color: var(--muted); }
+.seq .why { font-size: 14px; color: var(--muted); margin-top: 4px; }
+.lag { font-family: var(--font-mono); font-size: 14px; background: var(--accent-soft); border-radius: 6px; padding: 10px 14px; display: inline-block; }
+</style>
+</head>
+<body>
+<main class="wrap">
+
+<header>
+  <div class="eyebrow">SoftBank Hackathon 2026 본선 · CDC 설계 v0.1 · 2026-10-31</div>
+  <h1>CDC 설계: PostgreSQL 논리 복제</h1>
+  <p class="lede">가동 중인 DB를 멈추지 않고 옮기기 위해, 기존 데이터는 한 번 복사하고 그 이후의 변경은 WAL을 읽어 새 DB에 순서대로 재생합니다. 별도 CDC 도구 없이 PostgreSQL 내장 기능으로 구현합니다.</p>
+</header>
+
+<section>
+  <h2><span class="n">01</span>결정 요약</h2>
+  <div class="decisions">
+    <div class="decision"><div class="k">CDC 수단</div><div class="v">PostgreSQL 16 내장 논리 복제</div><div class="s">publication / subscription, 추가 구성 요소 없음</div></div>
+    <div class="decision"><div class="k">Debezium</div><div class="v">사용하지 않음</div><div class="s">이종 DB 이전으로 확장할 때의 대안으로 기록</div></div>
+    <div class="decision"><div class="k">덤프 + CDC</div><div class="v">방법 A: <code>copy_data = true</code></div><div class="s">초기 복사와 CDC가 자동으로 이어짐. 방법 B는 대용량 경로로 문서화</div></div>
+    <div class="decision"><div class="k">전환 제어</div><div class="v">PgBouncer PAUSE + marker 행</div><div class="s">앱 에러 없이 쓰기를 잠깐 멈추고 마지막 변경 도착을 확인</div></div>
+    <div class="decision"><div class="k">롤백</div><div class="v">역방향 복제 (pg-b → pg-a)</div><div class="s">전환 직후 생성해서 돌아갈 길을 유지</div></div>
+    <div class="decision"><div class="k">네트워크</div><div class="v">WireGuard 10.100.0.0/24</div><div class="s">5432 포트는 사설망에서만 개방</div></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">02</span>CDC의 원리</h2>
+  <p>PostgreSQL은 데이터를 바꿀 때 테이블 파일보다 <b>WAL(Write-Ahead Log)</b>에 먼저 기록하고, 각 기록에 위치 번호 <b>LSN</b>을 붙입니다. CDC는 이 WAL을 읽어서 다른 DB에 똑같이 재생하는 것입니다. <code>wal_level = logical</code>로 설정해야 행 단위 변경을 복원할 정보가 WAL에 함께 기록됩니다.</p>
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 780 240" role="img" aria-label="pg-a에서 WAL, 복제 슬롯, 논리 디코딩, publication을 거친 변경이 pg-b의 apply worker로 전달되고, pg-b는 반영 위치를 슬롯에 피드백한다">
+      <defs>
+        <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="a1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+      </defs>
+      <g font-family="IBM Plex Sans KR, sans-serif" font-size="12.5" fill="currentColor" text-anchor="middle">
+        <rect x="10" y="20" width="470" height="200" rx="8" fill="none" stroke="currentColor" opacity=".5"/>
+        <text x="22" y="40" text-anchor="start" font-weight="600">pg-a · 기존 DB (publisher)</text>
+        <rect x="560" y="20" width="210" height="200" rx="8" fill="none" stroke="currentColor" opacity=".5"/>
+        <text x="572" y="40" text-anchor="start" font-weight="600">pg-b · 새 DB (subscriber)</text>
+
+        <rect x="22" y="110" width="62" height="44" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="53" y="137">앱 쓰기</text>
+        <rect x="100" y="110" width="70" height="44" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="135" y="137">WAL</text>
+        <rect x="186" y="110" width="82" height="44" rx="5" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="227" y="129" fill="var(--accent)" font-weight="600">복제 슬롯</text>
+        <text x="227" y="146" font-size="11" fill="var(--accent)">책갈피</text>
+        <rect x="284" y="110" width="90" height="44" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="329" y="129">논리 디코딩</text>
+        <text x="329" y="146" font-size="11" opacity=".7">pgoutput</text>
+        <rect x="390" y="110" width="80" height="44" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="430" y="129">publication</text>
+        <text x="430" y="146" font-size="11" opacity=".7">테이블 필터</text>
+
+        <rect x="580" y="110" width="170" height="44" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="665" y="129">apply worker</text>
+        <text x="665" y="146" font-size="11" opacity=".7">변경을 순서대로 적용</text>
+        <rect x="580" y="172" width="170" height="34" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="665" y="194">테이블</text>
+
+        <line x1="84" y1="132" x2="98" y2="132" stroke="currentColor" marker-end="url(#a1)"/>
+        <line x1="170" y1="132" x2="184" y2="132" stroke="currentColor" marker-end="url(#a1)"/>
+        <line x1="268" y1="132" x2="282" y2="132" stroke="currentColor" marker-end="url(#a1)"/>
+        <line x1="374" y1="132" x2="388" y2="132" stroke="currentColor" marker-end="url(#a1)"/>
+        <line x1="470" y1="132" x2="578" y2="132" stroke="var(--accent)" stroke-width="2" marker-end="url(#a1a)"/>
+        <text x="524" y="124" font-size="11" fill="var(--accent)">변경 스트림</text>
+        <text x="524" y="150" font-size="10.5" fill="var(--accent)">WireGuard</text>
+        <line x1="665" y1="154" x2="665" y2="170" stroke="currentColor" marker-end="url(#a1)"/>
+
+        <polyline points="665,110 665,70 227,70 227,108" fill="none" stroke="currentColor" stroke-dasharray="5 4" marker-end="url(#a1)"/>
+        <text x="446" y="63" font-size="11.5">피드백: "LSN 150까지 반영했다" → 슬롯 위치 이동</text>
+        <text x="135" y="178" font-size="11" opacity=".75">LSN 100, 101, 102 …</text>
+        <text x="329" y="178" font-size="11" opacity=".75">커밋된 것만, 커밋 순서대로</text>
+      </g>
+    </svg>
+    </div>
+    <figcaption>슬롯은 구독자가 받아 간 위치를 기억하고, 그 이후의 WAL을 지우지 못하게 붙잡습니다. pg-b가 반영 위치를 알려 줘야 슬롯이 앞으로 이동합니다.</figcaption>
+  </figure>
+
+  <div class="scroll" style="margin-top:16px">
+  <table>
+    <thead><tr><th>구성 요소</th><th>위치</th><th>하는 일</th></tr></thead>
+    <tbody>
+      <tr><td>복제 슬롯</td><td>pg-a</td><td>WAL 안의 책갈피입니다. 구독자가 받아 간 위치를 기억하고, 받아 가기 전까지 이후 WAL을 지우지 못하게 붙잡습니다.</td></tr>
+      <tr><td>논리 디코딩</td><td>pg-a</td><td>WAL을 <code>INSERT orders(id=42, …)</code> 같은 행 단위 변경으로 바꿉니다. 커밋된 트랜잭션만, 커밋 순서대로 내보냅니다.</td></tr>
+      <tr><td>publication</td><td>pg-a</td><td>어떤 테이블의 변경을 내보낼지 정합니다.</td></tr>
+      <tr><td>subscription</td><td>pg-b</td><td>pg-a에 접속해 변경 스트림을 받습니다.</td></tr>
+      <tr><td>apply worker</td><td>pg-b</td><td>받은 변경을 적용하고, 반영한 위치를 pg-a에 알립니다. UPDATE와 DELETE는 PK로 대상 행을 찾고, PK가 없으면 <code>REPLICA IDENTITY FULL</code>이 필요합니다.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">03</span>시간 순서: 덤프에서 CDC까지</h2>
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 780 230" role="img" aria-label="LSN 100에 슬롯을 만들고 그 시점 스냅샷으로 초기 복사하는 동안 101부터 150까지의 변경은 슬롯이 보관하며, 복사가 끝나면 보관된 변경을 따라잡은 뒤 실시간 동기화로 넘어간다">
+      <g font-family="IBM Plex Sans KR, sans-serif" font-size="12.5" fill="currentColor">
+        <text x="10" y="44">pg-a 쓰기</text>
+        <line x1="130" y1="40" x2="760" y2="40" stroke="currentColor" stroke-width="6" stroke-dasharray="2 6" opacity=".55"/>
+        <text x="10" y="84">초기 복사</text>
+        <rect x="130" y="70" width="270" height="22" rx="4" fill="var(--accent)"/>
+        <text x="265" y="86" text-anchor="middle" font-size="11.5" fill="var(--surface)" font-weight="600">스냅샷(LSN 100) 기준 복사 = 덤프</text>
+        <text x="10" y="124">WAL 보관</text>
+        <rect x="130" y="110" width="270" height="22" rx="4" fill="var(--signal)" opacity=".22" stroke="var(--signal)"/>
+        <text x="265" y="126" text-anchor="middle" font-size="11.5" fill="var(--signal)" font-weight="600">LSN 101~150 변경을 슬롯이 붙잡아 둠</text>
+        <text x="10" y="164">CDC 적용</text>
+        <rect x="400" y="150" width="140" height="22" rx="4" fill="var(--accent)" opacity=".85"/>
+        <text x="470" y="166" text-anchor="middle" font-size="11.5" fill="var(--surface)" font-weight="600">따라잡기 101~150</text>
+        <rect x="540" y="150" width="220" height="22" rx="4" fill="var(--accent-soft)" stroke="var(--accent)"/>
+        <text x="650" y="166" text-anchor="middle" font-size="11.5" fill="var(--accent)" font-weight="600">실시간 동기화 (수십~수백 ms)</text>
+        <line x1="130" y1="190" x2="760" y2="190" stroke="currentColor" opacity=".6"/>
+        <line x1="130" y1="26" x2="130" y2="196" stroke="currentColor" stroke-dasharray="3 3" opacity=".6"/>
+        <line x1="400" y1="26" x2="400" y2="196" stroke="currentColor" stroke-dasharray="3 3" opacity=".6"/>
+        <line x1="540" y1="26" x2="540" y2="196" stroke="currentColor" stroke-dasharray="3 3" opacity=".6"/>
+        <text x="130" y="212" text-anchor="middle" font-size="11.5">① 슬롯 생성 (LSN 100)</text>
+        <text x="400" y="212" text-anchor="middle" font-size="11.5">② 복사 완료</text>
+        <text x="540" y="212" text-anchor="middle" font-size="11.5">③ 따라잡기 완료</text>
+        <text x="760" y="212" text-anchor="end" font-size="11.5" opacity=".7">시간 →</text>
+      </g>
+    </svg>
+    </div>
+    <figcaption>복사본에는 LSN 100까지의 데이터가 있고, 그 이후 변경은 슬롯에서 이어받습니다. 그래서 빠지는 구간도, 두 번 들어가는 구간도 없습니다.</figcaption>
+  </figure>
+  <p style="margin-top:14px">정상 상태에서 지연량은 다음처럼 측정하며, 대시보드의 CDC 지연 그래프가 이 값입니다.</p>
+  <div class="lag">지연량 = pg-a의 현재 WAL 위치 − 슬롯이 확인받은 위치</div>
+</section>
+
+<section>
+  <h2><span class="n">04</span>왜 Debezium이 아닌가</h2>
+  <p>두 방식 모두 복제 슬롯과 논리 디코딩으로 변경을 읽습니다. 차이는 읽은 변경을 어디로 보내느냐입니다.</p>
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 780 160" role="img" aria-label="논리 복제는 pg-a에서 pg-b로 직접 스트림을 보내고, Debezium은 Debezium, Kafka, JDBC Sink를 거쳐 pg-b에 쓴다">
+      <defs>
+        <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="a3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>
+      </defs>
+      <g font-family="IBM Plex Sans KR, sans-serif" font-size="12.5" fill="currentColor" text-anchor="middle">
+        <text x="10" y="44" text-anchor="start" font-weight="600" fill="var(--accent)">논리 복제 (채택)</text>
+        <rect x="160" y="22" width="90" height="36" rx="5" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="205" y="45">pg-a</text>
+        <rect x="660" y="22" width="90" height="36" rx="5" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="705" y="45">pg-b</text>
+        <line x1="250" y1="40" x2="658" y2="40" stroke="var(--accent)" stroke-width="2" marker-end="url(#a3a)"/>
+        <text x="455" y="33" font-size="11.5" fill="var(--accent)">WAL 스트림 · 추가 구성 요소 없음</text>
+
+        <text x="10" y="124" text-anchor="start" font-weight="600">Debezium (대안)</text>
+        <rect x="160" y="102" width="90" height="36" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="205" y="125">pg-a</text>
+        <rect x="285" y="102" width="95" height="36" rx="5" fill="none" stroke="currentColor" stroke-dasharray="4 3"/>
+        <text x="332" y="125">Debezium</text>
+        <rect x="415" y="102" width="80" height="36" rx="5" fill="none" stroke="currentColor" stroke-dasharray="4 3"/>
+        <text x="455" y="125">Kafka</text>
+        <rect x="530" y="102" width="95" height="36" rx="5" fill="none" stroke="currentColor" stroke-dasharray="4 3"/>
+        <text x="577" y="125">JDBC Sink</text>
+        <rect x="660" y="102" width="90" height="36" rx="5" fill="var(--surface)" stroke="currentColor"/>
+        <text x="705" y="125">pg-b</text>
+        <line x1="250" y1="120" x2="283" y2="120" stroke="currentColor" marker-end="url(#a3)"/>
+        <line x1="380" y1="120" x2="413" y2="120" stroke="currentColor" marker-end="url(#a3)"/>
+        <line x1="495" y1="120" x2="528" y2="120" stroke="currentColor" marker-end="url(#a3)"/>
+        <line x1="625" y1="120" x2="658" y2="120" stroke="currentColor" marker-end="url(#a3)"/>
+        <text x="455" y="154" font-size="11" opacity=".7">점선 = 추가로 띄우고 운영해야 하는 구성 요소</text>
+      </g>
+    </svg>
+    </div>
+    <figcaption>PostgreSQL에서 PostgreSQL로 옮기는 MVP에서는 중간 단계가 없는 논리 복제가 단순하고 안정적입니다.</figcaption>
+  </figure>
+  <div class="scroll" style="margin-top:16px">
+  <table>
+    <thead><tr><th></th><th>PostgreSQL 논리 복제</th><th>Debezium + Kafka</th></tr></thead>
+    <tbody>
+      <tr><td>추가로 띄울 것</td><td>없음</td><td>Kafka, Kafka Connect, Source/Sink 커넥터</td></tr>
+      <tr><td>트랜잭션 단위</td><td>트랜잭션 단위로 순서대로 적용</td><td>Sink 커넥터에서 트랜잭션 경계가 흐려지기 쉬움</td></tr>
+      <tr><td>초기 복사 + CDC 경계</td><td>자동으로 맞춰짐</td><td>스냅샷 모드로 지원되지만 Sink 설정 필요</td></tr>
+      <tr><td>역방향 복제 (롤백)</td><td>구독 하나 추가</td><td>파이프라인을 반대로 하나 더 구성</td></tr>
+      <tr><td>이종 대상 (MySQL, BigQuery 등)</td><td>불가능</td><td><b>가능</b> → 확장할 때 재검토</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">05</span>덤프와 CDC를 잇는 두 가지 방법</h2>
+  <div class="two">
+    <div class="panel">
+      <h3><span class="tag in">방법 A · MVP 채택</span></h3>
+      <p>스키마만 <code>pg_dump</code>로 옮기고, 데이터는 구독을 만들 때 초기 복사와 CDC가 자동으로 이어지게 합니다.</p>
+<pre># 1. 스키마만 덤프 (DDL은 복제되지 않음)
+pg_dump --schema-only "$PG_A" | psql "$PG_B"
+
+-- 2. pg-a
+CREATE PUBLICATION mig_pub FOR ALL TABLES;
+
+-- 3. pg-b
+CREATE SUBSCRIPTION mig_sub
+  CONNECTION 'host=10.100.0.1 dbname=app
+              user=replicator'
+  PUBLICATION mig_pub
+  WITH (copy_data = true);</pre>
+    </div>
+    <div class="panel">
+      <h3><span class="tag out">방법 B · 대용량 경로</span></h3>
+      <p>슬롯을 만들면서 스냅샷 이름을 받고, 그 스냅샷으로 데이터를 직접 덤프한 뒤 CDC만 시작합니다.</p>
+<pre># 1. 복제 연결로 슬롯 + 스냅샷 생성
+CREATE_REPLICATION_SLOT mig_slot
+  LOGICAL pgoutput EXPORT_SNAPSHOT
+# ※ 덤프가 끝날 때까지 연결 유지
+
+# 2. 같은 스냅샷으로 병렬 덤프·복원
+pg_dump --snapshot=&lt;이름&gt; -Fd -j 4 ...
+pg_restore ...
+
+-- 3. 만들어 둔 슬롯으로 CDC만 시작
+CREATE SUBSCRIPTION mig_sub ...
+  WITH (copy_data = false,
+        create_slot = false,
+        slot_name = 'mig_slot');</pre>
+    </div>
+  </div>
+  <div class="scroll" style="margin-top:16px">
+  <table>
+    <thead><tr><th></th><th>방법 A</th><th>방법 B</th></tr></thead>
+    <tbody>
+      <tr><td>구현 난이도</td><td>낮음 (SQL 몇 줄)</td><td>높음 (스냅샷 연결을 유지하는 프로그램 필요)</td></tr>
+      <tr><td>대용량 데이터</td><td>테이블 단위 복사</td><td>병렬 덤프로 더 빠름</td></tr>
+      <tr><td>덤프 파일</td><td>남지 않음</td><td>남음 (백업으로도 활용)</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <ul style="margin-top:14px">
+    <li><b>대시보드 표시:</b> 내부적으로는 한 명령이지만 <code>pg_subscription_rel</code>의 테이블별 상태로 초기 복사(덤프) → CDC 따라잡기 → 실시간 동기화를 나눠 보여 줍니다.</li>
+    <li><b>확장 아이디어:</b> <code>db-postgres</code> Skill이 DB 크기를 보고 A와 B 중 하나를 고르게 합니다.</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">06</span>전환 (switchover)</h2>
+  <ol class="seq">
+    <li><span class="no pause">1</span><div><div class="what">쓰기 일시 정지</div><div class="cmd">PgBouncer: PAUSE app</div><div class="why">새 트랜잭션을 대기시킵니다. 연결은 유지되므로 앱에는 에러가 나지 않고 잠깐 느려질 뿐입니다. <code>pool_mode = transaction</code>이어야 빨리 끝납니다.</div></div></li>
+    <li><span class="no">2</span><div><div class="what">마지막 변경 도착 확인</div><div class="cmd">pg-a에 marker 행 INSERT → pg-b에 나타날 때까지 대기</div><div class="why">변경은 커밋 순서대로 전달되므로 marker가 도착했다면 그 앞의 변경도 모두 도착한 것입니다. 지연량 숫자는 피드백 주기 때문에 늦게 갱신될 수 있습니다.</div></div></li>
+    <li><span class="no">3</span><div><div class="what">정방향 복제 종료</div><div class="cmd">pg-b: DROP SUBSCRIPTION mig_sub</div><div class="why">pg-a의 슬롯도 함께 정리됩니다. 역방향보다 먼저 꺼야 변경이 양쪽을 오가는 루프가 생기지 않습니다.</div></div></li>
+    <li><span class="no">4</span><div><div class="what">시퀀스 동기화</div><div class="cmd">pg-a의 시퀀스 값을 읽어 pg-b에 setval</div><div class="why">시퀀스 값은 복제되지 않습니다.</div></div></li>
+    <li><span class="no">5</span><div><div class="what">역방향 복제 생성</div><div class="cmd">pg-b: CREATE PUBLICATION / pg-a: CREATE SUBSCRIPTION … (copy_data = false)</div><div class="why">데이터가 이미 같으므로 복사 없이 변경만 받습니다. 이것이 롤백 경로입니다.</div></div></li>
+    <li><span class="no pause">6</span><div><div class="what">연결 전환 후 재개</div><div class="cmd">PgBouncer 대상을 pg-b로 변경 → RESUME app</div><div class="why">1번부터 여기까지가 쓰기 중단 시간이며, 목표는 2초 이하입니다.</div></div></li>
+  </ol>
+</section>
+
+<section>
+  <h2><span class="n">07</span>복제되지 않는 것과 운영상 주의점</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>항목</th><th>대응</th></tr></thead>
+    <tbody>
+      <tr><td>DDL</td><td>시작 전에 스키마를 복사하고, 이전 중에는 DDL을 금지합니다.</td></tr>
+      <tr><td>시퀀스 값</td><td>전환할 때 직접 동기화합니다.</td></tr>
+      <tr><td>Large Object</td><td>사전 점검에서 사용 여부를 확인합니다.</td></tr>
+      <tr><td>PK 없는 테이블</td><td><code>REPLICA IDENTITY FULL</code>을 설정합니다.</td></tr>
+      <tr><td>슬롯이 WAL을 붙잡음</td><td>구독자가 멈추면 pg-a 디스크가 계속 찹니다. 지연량에 경보를 걸고, 중단·실패 시 슬롯을 삭제하는 단계를 반드시 넣습니다.</td></tr>
+      <tr><td>TRUNCATE</td><td>복제되지만 대상에 FK가 있으면 실패할 수 있습니다.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">08</span>PoC 계획</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>지표</th><th>성공 기준</th></tr></thead>
+    <tbody>
+      <tr><td>쓰기 중단 시간 (PAUSE → RESUME)</td><td>2초 이하</td></tr>
+      <tr><td>부하 생성기 에러 수</td><td>0</td></tr>
+      <tr><td>유실된 쓰기</td><td>0 (클라이언트가 커밋 성공을 확인한 모든 ID가 pg-b에 존재)</td></tr>
+      <tr><td>전환 후 데이터</td><td>행 수와 체크섬 일치</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="two" style="margin-top:16px">
+<pre>poc/cdc/
+├── docker-compose.yml
+│     pg-a, pg-b (wal_level=logical)
+│     pgbouncer (transaction), loadgen
+├── schema.sql
+│     orders (bigserial PK)
+│     audit_log (PK 없음)
+├── loadgen/loadgen.py
+├── scripts/  → db-postgres Skill로 이동
+│   ├── precheck.sql
+│   ├── 01_copy_schema.sh
+│   ├── 02_start_replication.sh
+│   ├── 03_wait_sync.sh
+│   ├── 04_verify.py
+│   ├── 05_switchover.sh
+│   └── 06_rollback.sh
+└── results/  → 대시보드 데이터</pre>
+    <div class="panel">
+      <h3>시나리오</h3>
+      <ol class="steps">
+        <li>정방향 전환: pg-a → pg-b</li>
+        <li>전환 후 롤백: pg-b에 쓴 데이터가 역방향 복제로 pg-a에 반영되는지 확인</li>
+        <li>장애 주입: 복제 중 pg-b를 멈췄다 재시작해서 따라잡는지, 그동안 pg-a의 WAL이 쌓이는지 확인</li>
+        <li>사전 점검: PK 없는 테이블을 잡아내는지 확인</li>
+      </ol>
+    </div>
+  </div>
+  <p class="note" style="margin-top:16px">관련 문서: MVP 설계(<code>notes/mvp.md</code>), 아이디어 회의록(<code>notes/2026-10-31-ideation.md</code>), CDC 설계 원문(<code>notes/cdc.md</code>)</p>
+</section>
+
+</main>
+</body>
+</html>
