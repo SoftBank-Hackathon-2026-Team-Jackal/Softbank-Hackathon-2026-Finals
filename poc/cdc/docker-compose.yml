@@ -25,14 +25,25 @@ x-pg: &pg
 services:
   pg-a:
     <<: *pg
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+      NODE_NAME: pg-a   # 데모 앱이 "어느 DB에 저장됐는지" 표시할 때 쓴다
     volumes:
+      - ../../demo-app/db/node.sql:/docker-entrypoint-initdb.d/00-node.sql:ro
       - ./init/roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
       - ./init/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
       - ./init/seed.sql:/docker-entrypoint-initdb.d/03-seed.sql:ro
+      - ../../demo-app/db/schema.sql:/docker-entrypoint-initdb.d/04-chat.sql:ro
 
   pg-b:
     <<: *pg
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+      NODE_NAME: pg-b
     volumes:
+      - ../../demo-app/db/node.sql:/docker-entrypoint-initdb.d/00-node.sql:ro
       - ./init/roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
 
   pgbouncer:
