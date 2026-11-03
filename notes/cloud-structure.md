@@ -1,6 +1,6 @@
 # 클라우드 계정 구조 (v0.1, 2026-11-03)
 
-> 관련 문서: [MVP 설계](./mvp.md) · [CDC 설계](./cdc.md)
+> 관련 문서: [MVP 설계](./mvp.md) · [CDC 설계](./cdc.md) · [접속 안내 (팀원용)](./cloud-access.md)
 > 출발점: 예선 저장소 `one-tatchi-platform`의 `org/` Terraform과 ADR-0001(AWS 계정 구조와 팀 접근 방식)
 
 ---
