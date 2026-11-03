@@ -14,6 +14,13 @@ source "$(dirname "$0")/lib.sh"
 from="${1:?현재 주 DB}" to="${2:?새 주 DB}"
 fwd="$(sub_name "$from")" rev="$(sub_name "$to")"
 MARKER_TIMEOUT_MS="${MARKER_TIMEOUT_MS:-10000}"
+# PAUSE는 진행 중인 트랜잭션이 끝날 때까지 기다리고, 그동안 새 요청도 막힌다. 이 시간 안에 끝나지 않으면 포기한다
+PAUSE_TIMEOUT_SEC="${PAUSE_TIMEOUT_SEC:-5}"
+# PAUSE 안에서 하는 검증: checksum(전체 체크섬) | light(테이블별 max(id)) | auto(DB 200MB 이하면 checksum)
+VERIFY_IN_PAUSE="${VERIFY_IN_PAUSE:-auto}"
+if [[ "$VERIFY_IN_PAUSE" == auto ]]; then
+  (( $(db_bytes "$from") <= 200 * 1024 * 1024 )) && VERIFY_IN_PAUSE=checksum || VERIFY_IN_PAUSE=light
+fi
 
 [[ "$(pgb_target)" == "$from" ]] || die "PgBouncer 대상이 $from 이 아닙니다 (현재: $(pgb_target))"
 [[ "$(q "$to" "select count(*) from pg_subscription where subname = '$fwd' and subenabled")" == "1" ]] \
@@ -52,9 +59,14 @@ q "$from" "CREATE SUBSCRIPTION $rev CONNECTION '$(repl_conn "$to")' PUBLICATION 
            WITH (copy_data = false, origin = none, enabled = false)" >/dev/null
 
 ts[start]=$(now_ms)
-log "1. PAUSE"
-pgb "PAUSE app;" >/dev/null
+log "1. PAUSE (최대 ${PAUSE_TIMEOUT_SEC}초)"
 paused=1
+if ! timeout "$PAUSE_TIMEOUT_SEC" psql "$PGB_ADMIN_URL" -XAtq -c "PAUSE app;" >/dev/null; then
+  q "$from" "select format('  긴 트랜잭션: pid %s, %s, %s', pid, now() - xact_start, left(query, 60))
+             from pg_stat_activity where usename = 'app' and xact_start < now() - interval '1 second'
+             order by xact_start limit 5" >&2 || true
+  die "PAUSE가 ${PAUSE_TIMEOUT_SEC}초 안에 끝나지 않았습니다 (긴 트랜잭션). 전환을 중단합니다"
+fi
 ts[paused]=$(now_ms)
 
 log "2. marker 확인"
@@ -65,8 +77,13 @@ until [[ "$(q "$to" "select count(*) from mig.marker where id = '$marker'")" == 
 done
 ts[marker]=$(now_ms)
 
-log "3. 체크섬 비교"
-"$(dirname "$0")/04_compare.sh" "$from" "$to" 2>/dev/null || die "체크섬 불일치. 전환을 중단합니다"
+log "3. 검증 ($VERIFY_IN_PAUSE)"
+if [[ "$VERIFY_IN_PAUSE" == checksum ]]; then
+  "$(dirname "$0")/04_compare.sh" "$from" "$to" 2>/dev/null || die "체크섬 불일치. 전환을 중단합니다"
+else
+  ma="$(max_ids "$from")" mb="$(max_ids "$to")"
+  [[ "$ma" == "$mb" ]] || { diff <(echo "$ma") <(echo "$mb") >&2 || true; die "max(id) 불일치. 전환을 중단합니다"; }
+fi
 ts[verified]=$(now_ms)
 
 log "4. 정방향 구독 삭제 ($fwd)"
@@ -90,18 +107,20 @@ pgb "RESUME app;" >/dev/null
 switched=1
 ts[resumed]=$(now_ms)
 
-pause_ms=$(( ts[resumed] - ts[paused] ))
+# 쓰기 중단 = PAUSE 명령을 보낸 순간부터 RESUME까지 (PAUSE 대기 중에도 새 요청은 막힌다)
+pause_ms=$(( ts[resumed] - ts[start] ))
 result="$RESULTS_DIR/switchover-$(date +%Y%m%dT%H%M%S)-$from-to-$to.json"
 cat > "$result" <<JSON
 {
   "from": "$from",
   "to": "$to",
   "write_pause_ms": $pause_ms,
+  "verify_in_pause": "$VERIFY_IN_PAUSE",
   "steps_ms": {
     "prepare_reverse (PAUSE 전)": $(( ts[start] - ts[prepare] )),
-    "pause": $(( ts[paused] - ts[start] )),
+    "pause_wait_inflight": $(( ts[paused] - ts[start] )),
     "marker_wait": $(( ts[marker] - ts[paused] )),
-    "checksum": $(( ts[verified] - ts[marker] )),
+    "verify": $(( ts[verified] - ts[marker] )),
     "drop_forward_seq_sync_enable_reverse": $(( ts[reverse] - ts[verified] )),
     "retarget_resume": $(( ts[resumed] - ts[reverse] ))
   }

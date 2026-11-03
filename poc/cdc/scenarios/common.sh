@@ -13,11 +13,13 @@ fresh_start() {
   for n in ${REMOTE_NODES:-}; do
     docker compose --profile tools run --rm -T -e RESET_OK=yes toolbox scripts/reset_node.sh "$n"
   done
+  step "기존 데이터 생성 (scale ${SCALE:-1})"
+  $T seed.sh pg-a "${SCALE:-1}"
 }
 
 start_load() {
   step "부하 생성 시작 (초당 ${RATE:-50}건)"
-  RATE="${RATE:-50}" docker compose --profile load up -d --build loadgen >/dev/null
+  RATE="${RATE:-50}" WORKERS="${WORKERS:-8}" docker compose --profile load up -d --build loadgen >/dev/null
   sleep "${1:-3}"
 }
 

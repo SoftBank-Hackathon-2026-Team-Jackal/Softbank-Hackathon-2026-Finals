@@ -4,7 +4,7 @@ set -euxo pipefail
 exec > >(tee /var/log/cdc-poc-init.log) 2>&1
 
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard unzip python3
+DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard unzip python3 iperf3
 curl -fsSL https://get.docker.com | sh
 snap install aws-cli --classic
 
@@ -30,5 +30,10 @@ unzip -oq /tmp/poc-cdc.zip -d /opt/cdc
 chmod +x /opt/cdc/bin/* /opt/cdc/scripts/*.sh /opt/cdc/scenarios/*.sh
 mkdir -p /opt/cdc/results
 # docker compose 가 이 파일을 읽어 클라우드용 설정을 겹쳐 쓴다
-echo "COMPOSE_FILE=docker-compose.yml:compose.cloud-a.yml" > /opt/cdc/.env
+cat > /opt/cdc/.env <<ENV
+COMPOSE_FILE=docker-compose.yml:compose.cloud-a.yml
+PG_SHARED_BUFFERS=${pg_tuning.shared_buffers}
+PG_MAINTENANCE_WORK_MEM=${pg_tuning.maintenance_work_mem}
+PG_MAX_WAL_SIZE=${pg_tuning.max_wal_size}
+ENV
 touch /var/lib/cdc-poc-ready

@@ -26,13 +26,14 @@ resource "google_compute_firewall" "wireguard" {
 
 resource "google_compute_instance" "b" {
   name         = "${local.name}-env-b"
-  machine_type = "e2-small"
+  machine_type = var.env_b_machine_type
   tags         = ["cdc-poc-env-b"]
 
   boot_disk {
     initialize_params {
       image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
-      size  = 20
+      size  = var.disk_gb
+      type  = "pd-balanced"
     }
   }
 
@@ -56,6 +57,7 @@ resource "google_compute_instance" "b" {
       wg_port        = local.wg.b.port
       peer_endpoint  = "${aws_eip.a.public_ip}:${local.wg.a.port}"
       roles_sql      = file("${path.module}/../init/roles.sql")
+      pg_tuning      = var.pg_tuning
     })
   }
 }

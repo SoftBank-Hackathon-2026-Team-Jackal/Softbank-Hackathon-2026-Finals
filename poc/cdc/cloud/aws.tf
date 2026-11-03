@@ -112,7 +112,7 @@ resource "aws_iam_instance_profile" "a" {
 
 resource "aws_instance" "a" {
   ami                    = data.aws_ami.ubuntu.id
-  instance_type          = "t3.small"
+  instance_type          = var.env_a_instance_type
   subnet_id              = aws_subnet.a.id
   vpc_security_group_ids = [aws_security_group.a.id]
   iam_instance_profile   = aws_iam_instance_profile.a.name
@@ -122,7 +122,7 @@ resource "aws_instance" "a" {
   }
 
   root_block_device {
-    volume_size = 20
+    volume_size = var.disk_gb
     volume_type = "gp3"
     encrypted   = true
   }
@@ -136,6 +136,7 @@ resource "aws_instance" "a" {
     wg_port        = local.wg.a.port
     peer_endpoint  = "${google_compute_address.b.address}:${local.wg.b.port}"
     bundle_url     = "s3://${aws_s3_bucket.bundle.id}/${aws_s3_object.bundle.key}"
+    pg_tuning      = var.pg_tuning
   })
 
   tags = { Name = "${local.name}-env-a" }
