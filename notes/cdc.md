@@ -1,6 +1,6 @@
 # CDC 설계: PostgreSQL 논리 복제 (v0.1, 2026-10-31)
 
-> 관련 문서: [MVP 설계](./mvp.md) · [아이디어 회의록](./2026-10-31-ideation.md)
+> 관련 문서: [MVP 설계](./mvp.md) · [아이디어 회의록](./2026-10-31-ideation.md) · [전환 중단을 짧게 만드는 기술](./cdc-short-switchover.md)
 
 ---
 
