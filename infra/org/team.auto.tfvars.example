@@ -7,7 +7,10 @@ account_emails = {
 }
 
 users = {
-  "soul.lee" = { given_name = "Soul", family_name = "Lee", email = "<redacted>", role = "admin" }
+  "soul.lee"        = { given_name = "Soul", family_name = "Lee", email = "<redacted>", role = "admin" }
+  "seungcheol.park" = { given_name = "Seungcheol", family_name = "Park", email = "<redacted>", role = "admin" }
+  "minseo.kim"      = { given_name = "Minseo", family_name = "Kim", email = "<redacted>", role = "admin" }
+  "sangheon.lee"    = { given_name = "Sangheon", family_name = "Lee", email = "<redacted>", role = "admin" }
 }
 
 budget_emails = ["<redacted>"]
