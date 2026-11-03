@@ -40,6 +40,9 @@ API가 없어 콘솔에서 바꾼 값입니다. 바꾸면 이 표도 함께 고�
 |---|---|---|
 | IAM Identity Center | 인스턴스 | 조직 인스턴스, 서울(`ap-northeast-2`) |
 | Identity Center → Settings → Authentication | Send email OTP for users created from API | 켬 |
+| Identity Center → Settings → Authentication → Multi-factor authentication | Prompt users for MFA | **Never (disabled)** (2026-11-03) |
+
+**MFA를 끈 대가:** `soul.lee`는 관리 계정의 `AdministratorAccess`를 가지며, SCP는 관리 계정에 적용되지 않습니다. 따라서 조직 전체의 관리자 권한이 비밀번호 하나에 의존합니다. 해커톤 기간의 편의를 위해 감수했으며, 해커톤이 끝나거나 팀원을 추가할 때 "Require them to register an MFA device at sign in"으로 다시 켜는 것을 권장합니다.
 
 ## 규칙
 
