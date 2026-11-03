@@ -61,6 +61,8 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 
 ## 4. 다음 작업
 
+> **갱신 (2026-11-03 오후):** 아래 4.1과 4.2의 1~4단계를 마쳤습니다. 결과는 5절에 있습니다.
+
 ### 4.1 사람이 직접 할 일 (루트 계정, 콘솔)
 
 1. 루트로 AWS 콘솔에 로그인하고 리전을 서울(ap-northeast-2)로 선택합니다.
@@ -78,3 +80,45 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 3. 확인 결과에 맞춰 [클라우드 계정 구조](./cloud-structure.md) 7절을 고칩니다. 멤버 계정을 닫았다면 `prod` 계정을 새로 만들어야 하고, 닫은 계정의 이메일은 다시 쓸 수 없습니다.
 4. 예선 저장소의 `org/` Terraform을 출발점으로 OU, 계정, SSO, SCP, 예산을 다시 구성합니다.
 5. GCP는 Cloud Identity 가입, 조직 정책, 폴더, 프로젝트, 결제 계정 연결 순서로 진행합니다.
+
+---
+
+## 5. AWS 구성 결과
+
+### 5.1 진행 방법
+
+- 콘솔 대신 `aws login --profile root-bootstrap`으로 루트 임시 자격 증명을 받았습니다. 이 명령은 액세스 키를 만들지 않으며, 세션은 최대 12시간 동안 유효합니다.
+- Identity Center 조직 인스턴스는 API로 만들 수 없어서(`CreateInstance`는 관리 계정에서 거부됨) 콘솔에서 켰습니다. "Send email OTP for users created from API" 설정도 콘솔에서 켰습니다.
+- 나머지는 모두 [`infra/org`](../infra/org) Terraform으로 만들었습니다.
+
+### 5.2 조회한 기존 상태
+
+| 항목 | 상태 |
+|---|---|
+| Organization | 남아 있음. Terraform으로 import함 |
+| 멤버 계정 `one-tatchi` | SUSPENDED (닫힘). 다시 쓸 수 없음 |
+| OU, SCP(기본 정책 제외), Identity Center, S3 버킷, 예산, CloudTrail | 없음 |
+| 루트의 SCP 정책 유형 | 꺼져 있었음. `describe-organization`의 `AvailablePolicyTypes`는 더 이상 쓰이지 않는 필드라서 켜져 있는 것처럼 보였음 |
+| Route53 호스팅 존 | 없음. `soulee.dev`의 DNS를 지금 어디에서 관리하는지 확인이 필요함 (GCP Cloud Identity 도메인 인증에 필요) |
+
+### 5.3 apply 결과
+
+`Resources: 1 imported, 42 added, 1 changed, 0 destroyed.` state는 `sbh26-org-tfstate-…` 버킷으로 옮겼고, 다시 실행한 plan에는 변경 사항이 없습니다.
+
+| 만든 것 | 내용 |
+|---|---|
+| OU와 계정 | `platform`, `prod`, `sandbox` |
+| SCP | `baseline-guardrails`(세 OU), `sandbox-guardrails`(sandbox OU) |
+| Identity Center | 권한 세트 2개, 그룹 `admin`과 `readonly`, 사용자 `soul.lee` |
+| 예산 | platform $50, prod $100, sandbox $30 |
+| 감사 로그 | 조직 CloudTrail `org-trail` |
+
+로컬 `~/.aws/config`에는 `sbh26` SSO 세션과 `mgmt`, `platform`, `prod`, `sandbox` 프로필을 만들었고, 쓸 수 없게 된 `onetatchi` 프로필은 지웠습니다.
+
+### 5.4 남은 일
+
+1. `soul.lee`의 첫 SSO 로그인 (이메일 OTP로 비밀번호 설정)
+2. 첫 로그인 확인 뒤 `aws logout --profile root-bootstrap`
+3. 팀원 추가 (`team.auto.tfvars`)
+4. GuardDuty
+5. GCP 구성 (Cloud Identity, 조직 정책, 폴더, 프로젝트)

@@ -3,3 +3,9 @@
 *.tfstate
 *.tfstate.*
 .terraform/
+*.auto.tfvars
+!*.auto.tfvars.example
+terraform.tfvars
+tfplan
+plan.txt
+apply.txt
