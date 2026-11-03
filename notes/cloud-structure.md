@@ -10,7 +10,7 @@
 | 항목 | 결정 |
 |---|---|
 | AWS | 예선 때 만든 Organization을 그대로 사용하고, OU와 멤버 계정을 `platform`, `prod`, `sandbox`로 나눔 |
-| GCP | 이소울의 개인 계정과 결제 계정으로 새로 구성함. `soulee.dev` 도메인으로 Cloud Identity Free에 가입해 **GCP 조직 리소스를 만들고**, 폴더를 AWS의 OU와 같은 모양으로 나눔 |
+| GCP | 이소울의 개인 계정과 결제 계정으로 새로 구성함. `soulee.dev` 도메인으로 Cloud Identity Free에 가입해 **GCP 조직 리소스를 만들고**, 폴더를 AWS의 OU와 같은 모양으로 나눔. 팀원은 각자의 Google 계정으로 로그인함 |
 | 이름 | 예선 이름(`one-tatchi`)은 쓰지 않음. 계정, 폴더, 프로젝트 표시 이름은 `platform`, `prod`, `sandbox`로 통일함 |
 | 전역 고유 이름 | GCP 프로젝트 ID와 버킷 이름에는 접두어 `sbh26`을 붙임 |
 | Control Tower | 사용하지 않음 (3절 참고) |
@@ -86,7 +86,8 @@ AWS Organization                         GCP Organization (soulee.dev)
 | 항목 | AWS | GCP |
 |---|---|---|
 | 리전 제한 | SCP (예선의 guardrails를 모든 OU에 적용) | 조직 정책 `gcp.resourceLocations` |
-| 장기 키 금지 | SSO만 사용, IAM 사용자 생성 금지 | 조직 정책 `iam.disableServiceAccountKeyCreation` |
+| 장기 키 금지 | SSO만 사용, IAM 사용자 생성 금지 (SCP) | 조직 정책 `iam.managed.disableServiceAccountKeyCreation` (새 조직에 기본 적용) |
+| 외부 계정 | Identity Center 사용자만 접근 | 팀원이 각자의 Google 계정을 쓰므로 도메인 제한 정책(`iam.allowedPolicyMemberDomains`)을 풂. 대신 IAM 권한을 프로젝트 단위로 좁게 부여함 |
 | 샌드박스 제한 | sandbox OU 전용 SCP: IAM 사용자와 액세스 키 생성 금지, 소형 인스턴스만 허용, EKS와 RDS와 NAT Gateway 생성 금지 | sandbox 폴더의 조직 정책과 좁은 서비스 계정 권한 (`compute.instanceAdmin` 수준) |
 | 예산 | 계정별 AWS Budgets | 프로젝트별 Billing Budget |
 | 감사 로그 | 조직 CloudTrail | Cloud Audit Logs |

@@ -119,9 +119,9 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 
 1. ~~`soul.lee`의 첫 SSO 로그인~~ 완료. 네 프로필 모두 동작하고, sandbox에서 us-east-1 요청이 SCP에 막히는 것을 확인함
 2. ~~`aws logout --profile root-bootstrap`~~ 완료
-3. 팀원 추가 (`team.auto.tfvars`)
-4. GuardDuty
-5. GCP 구성 (Cloud Identity, 조직 정책, 폴더, 프로젝트)
+3. ~~팀원 추가~~ 완료. `seungcheol.park`, `minseo.kim`, `sangheon.lee`를 `admin` 그룹에 추가함 (6절 참고)
+4. GuardDuty: 보류. 보안 시각화 화면을 만들 때 Security Command Center와 함께 켬 (6절 참고)
+5. GCP 구성: 진행 중 (7절 참고)
 
 ### 5.5 첫 로그인에서 막힌 것
 
@@ -129,3 +129,88 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 |---|---|
 | `You are required to provide multi-factor authentication (MFA) that you do not have.` (로그인과 비밀번호 재설정 모두) | Standard authentication의 "Send email OTP for users without a password"가 꺼져 있었습니다. API로 만든 사용자는 비밀번호가 없어 이메일 OTP로 본인을 확인해야 합니다. 이 설정을 켜자 해결되었습니다. 설정 이름이 예선 때("users created from API")와 달라졌습니다 |
 | MFA 필수 | Prompt users for MFA를 Never (disabled)로 바꿨습니다. 감수한 위험은 [`infra/org/README.md`](../infra/org/README.md)에 적었습니다 |
+
+---
+
+## 6. 팀원과 GuardDuty
+
+### 6.1 Identity Center 팀원 추가
+
+| 이름 | username | 그룹 |
+|---|---|---|
+| 박승철 | `seungcheol.park` | `admin` |
+| 김민서 | `minseo.kim` | `admin` |
+| 이상헌 | `sangheon.lee` | `admin` |
+
+- Terraform으로 추가했습니다 (`6 added, 0 changed, 0 destroyed`). 실제 이메일은 커밋하지 않는 `team.auto.tfvars`에만 있습니다.
+- **API로 만든 사용자에게는 초대 메일이 가지 않습니다.** 팀원은 포털에 username을 입력하면 이메일 OTP를 받아 비밀번호를 정할 수 있습니다. 포털 주소, username, CLI 설정을 담은 안내문을 Slack으로 공유하는 것이 초대를 대신합니다.
+
+### 6.2 GuardDuty를 보류한 이유
+
+- 인프라 구성의 전제 조건이 아니고, MVP의 보안 점검은 `baseline_check.py`가 맡습니다.
+- 실제 위협이 없는 계정에서는 탐지 결과가 거의 나오지 않으므로, 데모에 쓰려면 샘플 탐지 결과(`create-sample-findings`)가 필요합니다.
+- 킥오프 질문 2번(GuardDuty와 Security Command Center를 통일해서 시각화)에 답하는 화면을 만들 때 조직 단위로 켭니다.
+
+---
+
+## 7. GCP 구성 (진행 중)
+
+### 7.1 결정
+
+| 항목 | 결정 | 근거 |
+|---|---|---|
+| 팀원 로그인 | **각자의 Google 계정**을 프로젝트 IAM에 추가함 | 팀원이 새 계정을 관리하지 않아도 되고, 초대 절차가 없습니다 |
+| 대안 | `soulee.dev` 계정을 팀원마다 발급 (채택하지 않음) | 도메인 제한 정책을 유지할 수 있지만 계정 발급과 비밀번호 전달이 필요합니다 |
+| 조직 관리자 | `admin@soulee.dev`는 부트스트랩과 비상시에만 사용하고, 평소에는 `alus20x@gmail.com`으로 작업함 | |
+| 이상헌 님 계정 | `shkm1420@naver.com`이 Google 계정으로 등록되어 있어야 함 | GCP IAM에는 Google 계정만 추가할 수 있습니다. **확인 필요** |
+
+### 7.2 확인한 초기 상태
+
+| 항목 | 상태 |
+|---|---|
+| `soulee.dev` DNS | Cloudflare에서 관리 중. 메일은 Cloudflare Email Routing으로 받음 |
+| 기존 GCP 조직 | 없었음 |
+| 결제 계정 | 기존 4개 모두 닫혀 있음. **새 결제 계정이 필요함** |
+
+### 7.3 진행한 것
+
+1. Cloud Identity Free 가입: 관리자 `admin@soulee.dev`, 도메인 `soulee.dev`
+2. 도메인 인증: Cloudflare DNS에 `google-site-verification` TXT 레코드 추가
+3. 조직 생성 확인: `soulee.dev` (ID `994714599350`, 고객 ID `C0284wz1e`)
+4. `gcloud auth login admin@soulee.dev`
+5. `admin@soulee.dev`로 GCP Console에 접속하면 "지금은 Google Cloud Console을 로드할 수 없습니다" 오류가 났습니다. 상태 페이지에는 장애가 없었습니다. CLI는 정상적으로 동작합니다
+
+### 7.4 새 조직에 기본으로 적용된 정책 (secure by default)
+
+| 제약 조건 | 의미 | 처리 |
+|---|---|---|
+| `iam.allowedPolicyMemberDomains` | `soulee.dev` 외부 계정을 IAM에 추가하지 못함 | **풀어야 함.** 팀원이 Gmail과 Naver 계정을 쓰기 때문입니다 |
+| `iam.managed.disableServiceAccountKeyCreation` | 서비스 계정 키 생성 금지 | 유지 (구조 문서 5절과 같음) |
+| `iam.disableServiceAccountKeyUpload` | 서비스 계정 키 업로드 금지 | 유지 |
+| `iam.automaticIamGrantsForDefaultServiceAccounts` | 기본 서비스 계정에 Editor 자동 부여 금지 | 유지 |
+| `storage.uniformBucketLevelAccess` | 버킷 단위 권한만 허용 | 유지 |
+| `essentialcontacts.managed.allowedContactDomains` | 중요 연락처를 조직 도메인으로 제한 | 유지 |
+| `compute.managed.restrictProtocolForwardingCreationForTypes` | 프로토콜 전달 유형 제한 | 유지 |
+
+### 7.5 gcloud로 직접 바꾼 것 (Terraform 밖)
+
+부트스트랩을 `gcloud`로 시도했고, 아래 두 가지가 적용되어 있습니다. 둘 다 Terraform으로 옮길(import) 예정입니다.
+
+| 변경 | 내용 |
+|---|---|
+| `admin@soulee.dev`에 `roles/orgpolicy.policyAdmin` 부여 | `organizationAdmin`에는 조직 정책을 바꾸는 권한이 없습니다 |
+| `iam.allowedPolicyMemberDomains`를 `allowAll: true`로 변경 | 10:38:30 UTC에 적용됨 |
+
+처음 시도에서는 `admin@soulee.dev`에 `orgpolicy.policyAdmin`이 없어 정책 변경이 실패했고, 그 때문에 Gmail 계정에 조직 역할을 주는 작업도 모두 실패했습니다. 스크립트가 실패 여부와 관계없이 "granted"를 출력해서 성공한 것처럼 보였으므로, 결과는 반드시 다시 조회해서 확인해야 합니다.
+
+### 7.6 남은 일
+
+1. `alus20x@gmail.com`으로 결제 계정 `sbh26` 생성 (사람이 직접)
+2. `infra/gcp-org` Terraform 작성
+   - 7.5의 두 변경을 import
+   - `alus20x@gmail.com`에 조직 역할 부여 (`organizationAdmin`, `folderAdmin`, `projectCreator`, `orgpolicy.policyAdmin`)
+   - 폴더 `prod`, `sandbox`와 프로젝트 `sbh26-prod`, `sbh26-sandbox`
+   - 조직 정책: 서울 리전만 허용 (`gcp.resourceLocations`)
+   - 예산 알림, API 활성화, 팀원 IAM
+   - state는 AWS 관리 계정의 state 버킷에 `gcp-org/` 키로 저장
+3. 이상헌 님의 Google 계정 확인
