@@ -59,9 +59,10 @@ docker compose --profile load --profile tools down -v   # 정리
 | `02_start_replication.sh` | PK 없는 테이블에 `REPLICA IDENTITY FULL`, `mig_pub` publication, `mig_from_<원본>` subscription 생성 |
 | `03_wait_sync.sh` | `pg_subscription_rel` 상태와 슬롯 지연량으로 단계를 판정. 1초마다 `results/replication-*.jsonl`에 기록 (대시보드 데이터) |
 | `04_compare.sh` | `public` 스키마 테이블별 행 수와 md5 비교 |
-| `05_switchover.sh` | PAUSE → marker 도착 확인 → 체크섬 → 정방향 구독 삭제 → 시퀀스 동기화 → 역방향 구독 생성 → 대상 변경 → RESUME. 체크섬 단계까지 실패하면 RESUME하고 원래 DB로 계속 서비스합니다. 단계별 소요 시간을 `results/switchover-*.json`에 남깁니다 |
+| `05_switchover.sh` | (PAUSE 전에 역방향 구독을 꺼진 상태로 생성) PAUSE → marker 도착 확인 → 체크섬 → 정방향 구독 삭제 → 시퀀스 동기화 → 역방향 구독 켜기 → 대상 변경 → RESUME. 체크섬 단계까지 실패하면 RESUME하고 원래 DB로 계속 서비스합니다. 단계별 소요 시간을 `results/switchover-*.json`에 남깁니다 |
 | `06_rollback.sh` | 현재 주 DB에서 지정한 DB로 같은 절차를 반대로 실행 |
 | `07_check_lost.sh` | `committed_ids.txt`의 주문 ID가 모두 있는지 확인 |
+| `reset_node.sh` | 원격 노드의 구독, 슬롯, publication, 스키마를 지워 시작 전 상태로 되돌림 (`RESET_OK=yes` 필요) |
 
 노드 이름 규칙: `pg-a`의 관리 접속은 `PG_A_URL`, 복제 접속 호스트는 `PG_A_REPL_HOST`(기본값은 노드 이름)입니다. 실제 환경에서는 이 환경 변수만 WireGuard 주소로 바꿉니다.
 
@@ -71,7 +72,7 @@ docker compose --profile load --profile tools down -v   # 정리
 
 | 성공 기준 | 결과 |
 |---|---|
-| 쓰기 중단 2초 이하 | **PASS:** 전환 461ms, 롤백 436ms |
+| 쓰기 중단 2초 이하 | **PASS:** 전환 461ms, 롤백 436ms (아래 개선 후 261ms, 268ms) |
 | 부하 생성기 에러 0 | **PASS:** 1,280건 성공, 에러 0 |
 | 유실 0 | **PASS:** pg-a와 pg-b 모두 유실 0 |
 | 전환 후 데이터 일치 | **PASS:** 3개 테이블 행 수와 체크섬 일치 |
@@ -94,15 +95,19 @@ PK 없는 `audit_log`를 보정하지 않고 publication을 만들자, **원본 
 
 ## 알게 된 것
 
-- **전환 중단 시간의 절반이 체크섬입니다.** 체크섬은 테이블 전체를 읽으므로 데이터 크기에 비례해 늘어납니다. 큰 DB에서는 PAUSE 안에서는 행 수만 비교하고, 체크섬은 PAUSE 전에 지연 0 상태에서 미리 하거나 전환 후에 하는 방식으로 바꿔야 합니다.
+- **개선 (2단계 중 반영):** 체크섬을 두 DB에서 동시에 계산하고, 역방향 구독을 PAUSE 전에 꺼진 상태로 미리 만들어 PAUSE 안에서는 `ENABLE`만 하도록 바꿨습니다. 로컬 중단 시간이 약 450ms에서 265ms로 줄었습니다. 자세한 내용은 [2단계 README](cloud/README.md)에 있습니다.
+- **전환 중단 시간의 절반이 체크섬이었습니다.** 체크섬은 테이블 전체를 읽으므로 데이터 크기에 비례해 늘어납니다. 큰 DB에서는 PAUSE 안에서는 행 수만 비교하고, 체크섬은 PAUSE 전에 지연 0 상태에서 미리 하거나 전환 후에 하는 방식으로 바꿔야 합니다.
 - **PgBouncer는 PAUSE 중 `RELOAD` 후 `RECONNECT`로 대상을 바꿉니다.** 서버 연결이 모두 반납된 상태이므로 새 대상으로 다시 연결되며, 클라이언트 연결은 끊기지 않습니다.
 - **PostgreSQL 15부터 `public` 스키마에 일반 사용자가 객체를 만들 수 없습니다.** 앱 역할에 `GRANT CREATE ON SCHEMA public`이 필요했습니다.
 - **복제 루프는 정방향 구독을 먼저 지우고 `origin = none`을 함께 써서 막았습니다.**
 - **주문 5만 건은 초기 복사가 1초 안에 끝나서 `copying` 단계가 거의 보이지 않습니다.** 시연에서 단계를 보여 주려면 데이터를 늘리거나 `03_wait_sync.sh`의 기록 간격을 줄여야 합니다.
 
+## 2단계: 실제 클라우드
+
+AWS `prod`와 GCP `sbh26-prod` 사이를 WireGuard로 잇고 같은 스크립트로 왕복 시나리오를 통과했습니다(쓰기 중단 약 1초). [cloud/README.md](cloud/README.md)를 참고합니다.
+
 ## 아직 하지 않은 것
 
-- 실제 클라우드(AWS `prod`, GCP `sbh26-prod`)와 WireGuard 위에서 재현
 - 대용량 경로(방법 B: 스냅샷 내보내기 + `pg_dump --snapshot`)
 - `cloud-migration-platform`의 `copy_data` Activity로 옮기기 (단계별 Activity로 나누고, 게이트 2에서 지연량을 보고 승인)
 - 비밀번호는 PoC용 고정값입니다. 실제 환경에서는 Secret으로 주입해야 합니다

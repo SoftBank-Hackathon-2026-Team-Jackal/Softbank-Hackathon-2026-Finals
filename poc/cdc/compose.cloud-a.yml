@@ -1,0 +1,21 @@
+# 2단계(클라우드) 덮어쓰기: pg-b는 원격(GCP VM, WireGuard 10.100.0.2)에 있다.
+# 이름은 그대로 pg-b로 두고 /etc/hosts 로 원격 주소를 가리키게 해서 scripts/ 를 바꾸지 않는다.
+services:
+  pg-a:
+    ports:
+      - "10.100.0.1:5432:5432"   # 역방향 복제 때 pg-b가 접속. WireGuard 주소에만 연다
+    extra_hosts:
+      - "pg-b:10.100.0.2"
+
+  pg-b:
+    profiles: ["local-only"]     # 로컬 pg-b는 띄우지 않음
+
+  pgbouncer:
+    depends_on: !override
+      pg-a: { condition: service_healthy }
+    extra_hosts:
+      - "pg-b:10.100.0.2"
+
+  toolbox:
+    extra_hosts:
+      - "pg-b:10.100.0.2"

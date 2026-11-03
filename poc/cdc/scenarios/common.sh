@@ -9,6 +9,10 @@ fresh_start() {
   docker compose --profile load --profile tools down -v --remove-orphans >/dev/null 2>&1 || true
   rm -f results/*.json results/*.jsonl results/*.txt
   docker compose up -d --build --wait >/dev/null
+  # 2단계(클라우드): 원격 노드는 down -v 로 지워지지 않으므로 SQL로 초기화한다
+  for n in ${REMOTE_NODES:-}; do
+    docker compose --profile tools run --rm -T -e RESET_OK=yes toolbox scripts/reset_node.sh "$n"
+  done
 }
 
 start_load() {

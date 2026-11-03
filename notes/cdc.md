@@ -143,7 +143,7 @@ CREATE SUBSCRIPTION mig_sub
 2. pg-a에 marker 행 INSERT              → pg-b에 나타날 때까지 대기
 3. DROP SUBSCRIPTION mig_sub (pg-b)    정방향 종료 + pg-a의 슬롯 정리
 4. 시퀀스 동기화                          pg-a 값을 읽어 pg-b에 setval
-5. 역방향 복제 생성                       pg-b: PUBLICATION / pg-a: SUBSCRIPTION (copy_data = false)
+5. 역방향 복제 켜기                       PAUSE 전에 pg-a에 SUBSCRIPTION(copy_data = false, enabled = false)을 미리 만들고 여기서 ENABLE
 6. PgBouncer 대상을 pg-b로 변경 → RESUME
 ```
 
@@ -170,6 +170,8 @@ CREATE SUBSCRIPTION mig_sub
 ## 7. PoC 계획
 
 > **2026-11-03 구현 완료:** [`poc/cdc`](../poc/cdc/README.md). 쓰기 중단 436~461ms, 에러 0, 유실 0, 체크섬 일치로 네 가지 성공 기준을 모두 통과했습니다. 전환 중단 시간의 절반이 체크섬이라는 점, REPLICA IDENTITY 누락이 원본 앱의 DELETE를 깨뜨린다는 점을 확인했습니다. 상세 결과는 PoC README에 있습니다.
+>
+> **같은 날 2단계 완료:** [`poc/cdc/cloud`](../poc/cdc/cloud/README.md). AWS `prod`와 GCP `sbh26-prod`를 WireGuard로 잇고 같은 스크립트로 왕복했습니다. 쓰기 중단은 처음 1.8초였고, 역방향 구독을 PAUSE 전에 미리 만들고 체크섬을 병렬로 계산하도록 바꿔 약 1초로 줄였습니다. 이 방식은 5장 절차에도 반영했습니다.
 
 ### 성공 기준
 

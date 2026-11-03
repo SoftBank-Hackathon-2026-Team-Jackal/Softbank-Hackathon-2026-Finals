@@ -1,0 +1,34 @@
+#!/bin/bash
+# env-a 초기화: WireGuard, Docker, PoC 파일. 컨테이너는 cloud/run.sh 로 띄운다
+set -euxo pipefail
+exec > >(tee /var/log/cdc-poc-init.log) 2>&1
+
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard unzip python3
+curl -fsSL https://get.docker.com | sh
+snap install aws-cli --classic
+
+umask 077
+cat > /etc/wireguard/wg0.conf <<WG
+[Interface]
+Address = ${wg_ip}/24
+ListenPort = ${wg_port}
+PrivateKey = ${wg_private_key}
+
+[Peer]
+PublicKey = ${wg_peer_key}
+Endpoint = ${peer_endpoint}
+AllowedIPs = ${wg_peer_ip}/32
+PersistentKeepalive = 25
+WG
+umask 022
+systemctl enable --now wg-quick@wg0
+
+mkdir -p /opt/cdc
+/snap/bin/aws s3 cp ${bundle_url} /tmp/poc-cdc.zip
+unzip -oq /tmp/poc-cdc.zip -d /opt/cdc
+chmod +x /opt/cdc/bin/* /opt/cdc/scripts/*.sh /opt/cdc/scenarios/*.sh
+mkdir -p /opt/cdc/results
+# docker compose 가 이 파일을 읽어 클라우드용 설정을 겹쳐 쓴다
+echo "COMPOSE_FILE=docker-compose.yml:compose.cloud-a.yml" > /opt/cdc/.env
+touch /var/lib/cdc-poc-ready

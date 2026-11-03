@@ -1,0 +1,42 @@
+#!/bin/bash
+# env-b 초기화: WireGuard, Docker, pg-b. 재부팅해도 다시 실행되므로 이미 된 것은 건너뛴다
+set -euxo pipefail
+
+if [ ! -f /etc/wireguard/wg0.conf ]; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard
+  curl -fsSL https://get.docker.com | sh
+
+  umask 077
+  cat > /etc/wireguard/wg0.conf <<WG
+[Interface]
+Address = ${wg_ip}/24
+ListenPort = ${wg_port}
+PrivateKey = ${wg_private_key}
+
+[Peer]
+PublicKey = ${wg_peer_key}
+Endpoint = ${peer_endpoint}
+AllowedIPs = ${wg_peer_ip}/32
+PersistentKeepalive = 25
+WG
+  umask 022
+  systemctl enable --now wg-quick@wg0
+fi
+
+mkdir -p /opt/cdc/init
+cat > /opt/cdc/init/01-roles.sql <<'SQL'
+${roles_sql}
+SQL
+
+# 5432는 WireGuard 주소에만 바인딩한다. 역방향 복제 때 pg-b가 pg-a(10.100.0.1)에 접속한다
+if ! docker inspect pg-b >/dev/null 2>&1; then
+  docker run -d --name pg-b --restart unless-stopped \
+    -p ${wg_ip}:5432:5432 \
+    --add-host pg-a:${wg_peer_ip} \
+    -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=app \
+    -v /opt/cdc/init:/docker-entrypoint-initdb.d:ro \
+    -v pg-b-data:/var/lib/postgresql/data \
+    postgres:16 \
+    postgres -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10 -c wal_sender_timeout=10s
+fi
