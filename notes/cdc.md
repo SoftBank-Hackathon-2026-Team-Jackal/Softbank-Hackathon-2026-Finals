@@ -169,6 +169,8 @@ CREATE SUBSCRIPTION mig_sub
 
 ## 7. PoC 계획
 
+> **2026-11-03 구현 완료:** [`poc/cdc`](../poc/cdc/README.md). 쓰기 중단 436~461ms, 에러 0, 유실 0, 체크섬 일치로 네 가지 성공 기준을 모두 통과했습니다. 전환 중단 시간의 절반이 체크섬이라는 점, REPLICA IDENTITY 누락이 원본 앱의 DELETE를 깨뜨린다는 점을 확인했습니다. 상세 결과는 PoC README에 있습니다.
+
 ### 성공 기준
 
 | 지표 | 기준 |

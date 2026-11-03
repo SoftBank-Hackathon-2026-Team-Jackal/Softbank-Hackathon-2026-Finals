@@ -1,0 +1,78 @@
+# CDC PoC: pg-a(기존) → pg-b(새) 논리 복제, PgBouncer로 전환, 부하 생성기로 무중단 검증
+name: cdc-poc
+
+x-pg: &pg
+  image: postgres:16
+  command:
+    - postgres
+    - -c
+    - wal_level=logical
+    - -c
+    - max_replication_slots=10
+    - -c
+    - max_wal_senders=10
+    - -c
+    - wal_sender_timeout=10s
+  environment:
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: app
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+    interval: 2s
+    timeout: 3s
+    retries: 30
+
+services:
+  pg-a:
+    <<: *pg
+    volumes:
+      - ./init/roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+      - ./init/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
+      - ./init/seed.sql:/docker-entrypoint-initdb.d/03-seed.sql:ro
+
+  pg-b:
+    <<: *pg
+    volumes:
+      - ./init/roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+
+  pgbouncer:
+    build: ./pgbouncer
+    depends_on:
+      pg-a: { condition: service_healthy }
+      pg-b: { condition: service_healthy }
+    volumes:
+      - pgb-runtime:/etc/pgbouncer/runtime
+    ports:
+      - "6432:6432"
+
+  loadgen:
+    build: ./loadgen
+    profiles: ["load"]
+    depends_on: [pgbouncer]
+    environment:
+      DATABASE_URL: postgresql://app:app@pgbouncer:6432/app
+      RATE: "50"
+      OUT_DIR: /results
+    volumes:
+      - ./results:/results
+
+  # 스크립트 실행용. 실제 환경에서는 같은 스크립트를 URL만 바꿔 실행한다
+  toolbox:
+    image: postgres:16
+    profiles: ["tools"]
+    working_dir: /poc
+    entrypoint: ["bash"]
+    environment:
+      PGPASSWORD: postgres
+      PG_A_URL: postgresql://postgres:postgres@pg-a:5432/app
+      PG_B_URL: postgresql://postgres:postgres@pg-b:5432/app
+      PGB_ADMIN_URL: postgresql://postgres:postgres@pgbouncer:6432/pgbouncer
+      PGB_RUNTIME: /pgb-runtime
+      REPL_PASSWORD: replicator
+    volumes:
+      - ./scripts:/poc/scripts:ro
+      - ./results:/poc/results
+      - pgb-runtime:/pgb-runtime
+
+volumes:
+  pgb-runtime:

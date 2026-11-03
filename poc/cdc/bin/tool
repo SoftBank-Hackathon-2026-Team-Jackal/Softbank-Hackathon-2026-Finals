@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# toolbox 컨테이너 안에서 scripts/ 의 스크립트를 실행한다. 예: bin/tool 05_switchover.sh pg-a pg-b
+set -euo pipefail
+cd "$(dirname "$0")/.."
+script="${1:?스크립트 이름}"; shift
+exec docker compose --profile tools run --rm -T toolbox "scripts/$script" "$@"
