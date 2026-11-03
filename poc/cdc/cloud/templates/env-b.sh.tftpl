@@ -4,7 +4,7 @@ set -euxo pipefail
 
 if [ ! -f /etc/wireguard/wg0.conf ]; then
   apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard
+  DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard iperf3
   curl -fsSL https://get.docker.com | sh
 
   umask 077
@@ -31,12 +31,18 @@ SQL
 
 # 5432는 WireGuard 주소에만 바인딩한다. 역방향 복제 때 pg-b가 pg-a(10.100.0.1)에 접속한다
 if ! docker inspect pg-b >/dev/null 2>&1; then
-  docker run -d --name pg-b --restart unless-stopped \
+  docker run -d --name pg-b --restart unless-stopped --shm-size=1g \
     -p ${wg_ip}:5432:5432 \
     --add-host pg-a:${wg_peer_ip} \
     -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=app \
     -v /opt/cdc/init:/docker-entrypoint-initdb.d:ro \
     -v pg-b-data:/var/lib/postgresql/data \
     postgres:16 \
-    postgres -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10 -c wal_sender_timeout=10s
+    postgres -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10 -c wal_sender_timeout=10s \
+      -c max_logical_replication_workers=8 -c max_sync_workers_per_subscription=4 \
+      -c shared_buffers=${pg_tuning.shared_buffers} -c maintenance_work_mem=${pg_tuning.maintenance_work_mem} \
+      -c max_wal_size=${pg_tuning.max_wal_size}
 fi
+
+# WireGuard 구간 대역폭 측정용 (터널 안에서만 들림)
+pgrep iperf3 >/dev/null || iperf3 -s -B ${wg_ip} -D

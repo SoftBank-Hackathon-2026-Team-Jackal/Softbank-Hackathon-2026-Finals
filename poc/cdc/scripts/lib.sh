@@ -43,14 +43,27 @@ fix_replica_identity() {
   done
 }
 
-# public 스키마 테이블별 "이름|행 수|md5"
+# public 스키마 테이블별 "이름|행 수|해시 합". 행마다 md5 앞 64비트를 더하므로 순서와 무관하고 메모리를 거의 쓰지 않는다
 checksums() {
   psql "$(url "$1")" -XAtq -v ON_ERROR_STOP=1 <<'SQL'
-select format('select %L, count(*), md5(coalesce(string_agg(t::text, E''\n'' order by t::text), '''')) from public.%I t',
+select format('select %L, count(*), coalesce(sum((''x'' || substr(md5(t::text), 1, 16))::bit(64)::bigint::numeric), 0) from public.%I t',
               tablename, tablename)
 from pg_tables where schemaname = 'public' order by tablename \gexec
 SQL
 }
+
+# PK 컬럼이 id 인 테이블별 "이름|max(id)". 인덱스만 읽으므로 데이터가 커도 빠르다 (전환 중 가벼운 검증용)
+max_ids() {
+  psql "$(url "$1")" -XAtq -v ON_ERROR_STOP=1 <<'SQL'
+select format('select %L, coalesce(max(id), 0) from public.%I', c.relname, c.relname)
+from pg_class c join pg_namespace n on n.oid = c.relnamespace
+join pg_index i on i.indrelid = c.oid and i.indisprimary
+join pg_attribute a on a.attrelid = c.oid and a.attnum = i.indkey[0] and a.attname = 'id'
+where n.nspname = 'public' and c.relkind = 'r' order by c.relname \gexec
+SQL
+}
+
+db_bytes() { q "$1" "select pg_database_size(current_database())"; }
 
 # 발행자의 슬롯 지연량(바이트). 슬롯이 없으면 -1
 slot_lag() {
