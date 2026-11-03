@@ -121,7 +121,7 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 2. ~~`aws logout --profile root-bootstrap`~~ 완료
 3. ~~팀원 추가~~ 완료. `seungcheol.park`, `minseo.kim`, `sangheon.lee`를 `admin` 그룹에 추가함 (6절 참고)
 4. GuardDuty: 보류. 보안 시각화 화면을 만들 때 Security Command Center와 함께 켬 (6절 참고)
-5. GCP 구성: 진행 중 (7절 참고)
+5. ~~GCP 구성~~ 완료 (7절 참고)
 
 ### 5.5 첫 로그인에서 막힌 것
 
@@ -153,7 +153,7 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 
 ---
 
-## 7. GCP 구성 (진행 중)
+## 7. GCP 구성
 
 ### 7.1 결정
 
@@ -205,11 +205,33 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 
 ### 7.6 남은 일
 
-1. `alus20x@gmail.com`으로 결제 계정 `sbh26` 생성 (사람이 직접)
+1. ~~결제 계정 생성~~ 완료. `alus20x@gmail.com`이 소유한 KRW 결제 계정 (`내 결제 계정 4`). 결제 계정은 조직 밖에 있어도 조직 안의 프로젝트에 연결할 수 있습니다
 2. ~~`infra/gcp-org/bootstrap`~~ 완료 (`2 imported, 4 added`). 7.5의 두 변경을 import하고, `alus20x@gmail.com`에 `organizationAdmin`, `folderAdmin`, `projectCreator`, `orgpolicy.policyAdmin`을 부여함
-3. `infra/gcp-org` 본 스택: 코드 작성과 `validate`까지 완료. 결제 계정 ID를 받으면 plan과 apply를 진행함
+3. ~~`infra/gcp-org` 본 스택~~ 완료 (`29 added`). 다시 실행한 plan에도 변경 사항이 없음
    - 폴더 `prod`, `sandbox`와 프로젝트 `sbh26-prod`, `sbh26-sandbox`
    - 조직 정책: 서울 리전만 허용 (`gcp.resourceLocations`)
    - 예산 알림, API 활성화, 팀원 IAM
    - state는 AWS 관리 계정의 state 버킷에 `gcp-org/` 키로 저장
 4. ~~이상헌 님의 Google 계정 확인~~ `shkm1420@gmail.com`을 쓰기로 함
+
+### 7.7 GCP 구성 결과
+
+| 만든 것 | 내용 |
+|---|---|
+| 폴더 | `prod`, `sandbox` |
+| 프로젝트 | `sbh26-prod`, `sbh26-sandbox` (기본 VPC 없음, 결제 계정 연결됨) |
+| 조직 정책 | `gcp.resourceLocations`: `in:asia-northeast3-locations` |
+| 예산 | prod 100,000원, sandbox 30,000원. 50·80·100% 실제 사용액과 100% 예측액에서 알림 |
+| IAM | 팀원 세 명에게 두 프로젝트의 Editor. 프로젝트를 만든 `alus20x@gmail.com`은 자동으로 Owner가 됨 |
+
+확인한 것:
+
+- 두 프로젝트 모두 결제가 활성화되어 있습니다.
+- sandbox 프로젝트에서 `us-central1` 버킷을 만들면 `constraints/gcp.resourceLocations` 위반으로 거부됩니다.
+- 예산 두 개가 KRW로 만들어졌습니다.
+
+### 7.8 남은 일
+
+- 팀원에게 GCP 접속 안내 공유 (콘솔과 `gcloud` 로그인)
+- `admin@soulee.dev`로 GCP Console이 열리지 않는 문제는 아직 해결하지 않았습니다. CLI로는 작업할 수 있어 진행에 지장은 없습니다
+- Executor 서비스 계정과 AWS 역할을 공급자로 쓰는 Workload Identity Federation (구조 문서 4절)

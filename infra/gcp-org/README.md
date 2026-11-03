@@ -35,7 +35,7 @@ terraform apply
 | Cloud Identity Free | 조직 | `soulee.dev`, 관리자 `admin@soulee.dev` |
 | Cloudflare DNS (`soulee.dev`) | 도메인 인증 | `google-site-verification` TXT 레코드 |
 | Cloudflare Email Routing | `admin@soulee.dev` 전달 | `alus20x@gmail.com`으로 전달 (설정했다면) |
-| Cloud Billing | 결제 계정 | `alus20x@gmail.com`이 소유. ID는 `team.auto.tfvars`에 둠 |
+| Cloud Billing | 결제 계정 | `내 결제 계정 4` (KRW), `alus20x@gmail.com`이 소유하고 조직 밖에 있음. ID는 `team.auto.tfvars`에 둠 |
 
 ## 새 조직에 기본으로 적용된 정책
 
