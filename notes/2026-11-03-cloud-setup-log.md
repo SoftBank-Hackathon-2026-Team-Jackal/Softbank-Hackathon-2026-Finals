@@ -117,8 +117,15 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 
 ### 5.4 남은 일
 
-1. `soul.lee`의 첫 SSO 로그인 (이메일 OTP로 비밀번호 설정)
-2. 첫 로그인 확인 뒤 `aws logout --profile root-bootstrap`
+1. ~~`soul.lee`의 첫 SSO 로그인~~ 완료. 네 프로필 모두 동작하고, sandbox에서 us-east-1 요청이 SCP에 막히는 것을 확인함
+2. ~~`aws logout --profile root-bootstrap`~~ 완료
 3. 팀원 추가 (`team.auto.tfvars`)
 4. GuardDuty
 5. GCP 구성 (Cloud Identity, 조직 정책, 폴더, 프로젝트)
+
+### 5.5 첫 로그인에서 막힌 것
+
+| 증상 | 원인과 해결 |
+|---|---|
+| `You are required to provide multi-factor authentication (MFA) that you do not have.` (로그인과 비밀번호 재설정 모두) | Standard authentication의 "Send email OTP for users without a password"가 꺼져 있었습니다. API로 만든 사용자는 비밀번호가 없어 이메일 OTP로 본인을 확인해야 합니다. 이 설정을 켜자 해결되었습니다. 설정 이름이 예선 때("users created from API")와 달라졌습니다 |
+| MFA 필수 | Prompt users for MFA를 Never (disabled)로 바꿨습니다. 감수한 위험은 [`infra/org/README.md`](../infra/org/README.md)에 적었습니다 |

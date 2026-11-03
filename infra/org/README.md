@@ -39,7 +39,7 @@ API가 없어 콘솔에서 바꾼 값입니다. 바꾸면 이 표도 함께 고�
 | 위치 | 설정 | 현재 값 |
 |---|---|---|
 | IAM Identity Center | 인스턴스 | 조직 인스턴스, 서울(`ap-northeast-2`) |
-| Identity Center → Settings → Authentication | Send email OTP for users created from API | 켬 |
+| Identity Center → Settings → Authentication → Standard authentication | Send email OTP for users without a password | 켬 (예선 때 이름은 "Send email OTP for users created from API") |
 | Identity Center → Settings → Authentication → Multi-factor authentication | Prompt users for MFA | **Never (disabled)** (2026-11-03) |
 
 **MFA를 끈 대가:** `soul.lee`는 관리 계정의 `AdministratorAccess`를 가지며, SCP는 관리 계정에 적용되지 않습니다. 따라서 조직 전체의 관리자 권한이 비밀번호 하나에 의존합니다. 해커톤 기간의 편의를 위해 감수했으며, 해커톤이 끝나거나 팀원을 추가할 때 "Require them to register an MFA device at sign in"으로 다시 켜는 것을 권장합니다.
@@ -48,7 +48,7 @@ API가 없어 콘솔에서 바꾼 값입니다. 바꾸면 이 표도 함께 고�
 
 - **apply는 조직 관리자가 로컬에서만 실행합니다.** 관리 계정에는 CI(OIDC)를 열지 않습니다.
 - **`team.auto.tfvars`는 커밋하지 않습니다.** 계정과 팀원의 이메일이 들어 있습니다. 형식은 `team.auto.tfvars.example`을 참고합니다.
-- 루트 세션(`aws login --profile root-bootstrap`)은 처음 구성할 때만 사용했습니다. 이후에는 `mgmt` 프로필을 사용합니다.
+- 루트 세션(`aws login --profile root-bootstrap`)은 처음 구성할 때만 사용했고, 2026-11-03에 `aws logout`으로 정리했습니다. 이후에는 `mgmt` 프로필을 사용합니다.
 
 ## 팀원 추가
 
@@ -56,7 +56,7 @@ API가 없어 콘솔에서 바꾼 값입니다. 바꾸면 이 표도 함께 고�
 
 ## 처음부터 다시 만들 때
 
-1. 콘솔에서 Identity Center를 켜고, "Send email OTP for users created from API"를 켭니다.
+1. 콘솔에서 Identity Center를 켜고, Standard authentication의 "Send email OTP for users without a password"를 켭니다. 이 설정이 꺼져 있으면 API로 만든 사용자는 첫 로그인과 비밀번호 재설정에서 MFA 오류가 납니다.
 2. `aws login --profile root-bootstrap`으로 루트 임시 자격 증명을 받습니다.
 3. `backend.tf`의 블록을 주석으로 처리하고, 남아 있는 조직이 있으면 `import` 블록을 추가합니다.
 4. `terraform init`, `terraform plan`, `terraform apply`를 실행합니다.
