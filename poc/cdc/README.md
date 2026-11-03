@@ -13,7 +13,7 @@ toolbox: scripts/ 를 실행하는 컨테이너 (psql, pg_dump)
 
 | 서비스 | 내용 |
 |---|---|
-| `pg-a`, `pg-b` | PostgreSQL 16, `wal_level=logical`. pg-a에만 스키마와 기존 데이터(주문 5만 건)가 있습니다 |
+| `pg-a`, `pg-b` | PostgreSQL 16, `wal_level=logical`. pg-a에만 스키마가 있고, 기존 데이터는 `scripts/seed.sh`가 만듭니다 (쇼핑몰 7개 테이블, SCALE 1 ≈ 60MB, 100 ≈ 4.4GB) |
 | `pgbouncer` | 앱이 접속하는 유일한 주소. `PAUSE`, `RELOAD`, `RECONNECT`, `RESUME`으로 대상을 바꿉니다 |
 | `loadgen` | 주문 INSERT, 일부 UPDATE, `audit_log` INSERT와 주기적 DELETE. 커밋에 성공한 주문 ID를 `results/committed_ids.txt`에 남깁니다 |
 | `toolbox` | 스크립트 실행 환경. 실제 환경에서는 같은 스크립트에 접속 URL만 바꿔서 실행합니다 |
@@ -28,6 +28,7 @@ Docker만 있으면 됩니다.
 scenarios/01_round_trip.sh                 # 전환과 롤백을 한 번씩 하고 성공 기준으로 판정
 scenarios/02_subscriber_outage.sh          # 복제 중 pg-b를 20초 멈췄다가 재시작
 scenarios/03_missing_replica_identity.sh   # 사전 점검을 건너뛰면 무엇이 깨지는지 확인
+SCALE=2 RATE=100 scenarios/04_realistic.sh # 운영에 가까운 이전 (클라우드에서는 SCALE=100 RATE=200 ≈ 4.4GB)
 ```
 
 단계별로 직접 실행하려면 다음 순서를 따릅니다.
