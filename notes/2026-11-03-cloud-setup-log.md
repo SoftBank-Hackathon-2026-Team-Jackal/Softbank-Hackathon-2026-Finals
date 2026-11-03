@@ -162,7 +162,7 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 | 팀원 로그인 | **각자의 Google 계정**을 프로젝트 IAM에 추가함 | 팀원이 새 계정을 관리하지 않아도 되고, 초대 절차가 없습니다 |
 | 대안 | `soulee.dev` 계정을 팀원마다 발급 (채택하지 않음) | 도메인 제한 정책을 유지할 수 있지만 계정 발급과 비밀번호 전달이 필요합니다 |
 | 조직 관리자 | `admin@soulee.dev`는 부트스트랩과 비상시에만 사용하고, 평소에는 `alus20x@gmail.com`으로 작업함 | |
-| 이상헌 님 계정 | `shkm1420@naver.com`이 Google 계정으로 등록되어 있어야 함 | GCP IAM에는 Google 계정만 추가할 수 있습니다. **확인 필요** |
+| 이상헌 님 계정 | `shkm1420@gmail.com` 사용 | GCP IAM에는 Google 계정만 추가할 수 있어서 Naver 대신 Gmail을 씁니다 |
 
 ### 7.2 확인한 초기 상태
 
@@ -194,7 +194,7 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 
 ### 7.5 gcloud로 직접 바꾼 것 (Terraform 밖)
 
-부트스트랩을 `gcloud`로 시도했고, 아래 두 가지가 적용되어 있습니다. 둘 다 Terraform으로 옮길(import) 예정입니다.
+부트스트랩을 `gcloud`로 시도했고, 아래 두 가지가 적용되어 있었습니다. 이후 [`infra/gcp-org/bootstrap`](../infra/gcp-org/bootstrap)으로 둘 다 import했습니다.
 
 | 변경 | 내용 |
 |---|---|
@@ -206,11 +206,10 @@ Claude in Chrome으로 AWS 콘솔(`console.aws.amazon.com`)을 조작하려 했�
 ### 7.6 남은 일
 
 1. `alus20x@gmail.com`으로 결제 계정 `sbh26` 생성 (사람이 직접)
-2. `infra/gcp-org` Terraform 작성
-   - 7.5의 두 변경을 import
-   - `alus20x@gmail.com`에 조직 역할 부여 (`organizationAdmin`, `folderAdmin`, `projectCreator`, `orgpolicy.policyAdmin`)
+2. ~~`infra/gcp-org/bootstrap`~~ 완료 (`2 imported, 4 added`). 7.5의 두 변경을 import하고, `alus20x@gmail.com`에 `organizationAdmin`, `folderAdmin`, `projectCreator`, `orgpolicy.policyAdmin`을 부여함
+3. `infra/gcp-org` 본 스택: 코드 작성과 `validate`까지 완료. 결제 계정 ID를 받으면 plan과 apply를 진행함
    - 폴더 `prod`, `sandbox`와 프로젝트 `sbh26-prod`, `sbh26-sandbox`
    - 조직 정책: 서울 리전만 허용 (`gcp.resourceLocations`)
    - 예산 알림, API 활성화, 팀원 IAM
    - state는 AWS 관리 계정의 state 버킷에 `gcp-org/` 키로 저장
-3. 이상헌 님의 Google 계정 확인
+4. ~~이상헌 님의 Google 계정 확인~~ `shkm1420@gmail.com`을 쓰기로 함
