@@ -6,4 +6,7 @@ back="${1:?되돌아갈 DB}"
 cur="$(pgb_target)"
 [[ "$cur" != "$back" ]] || die "이미 $back 이 주 DB입니다"
 "$(dirname "$0")/03_wait_sync.sh" "$cur" "$back" 60
-exec "$(dirname "$0")/05_switchover.sh" "$cur" "$back"
+if [[ "${SWITCHOVER:-fast}" == classic ]]; then
+  exec "$(dirname "$0")/05_switchover.sh" "$cur" "$back"
+fi
+exec "$(dirname "$0")/05_switchover_fast.py" "$cur" "$back"

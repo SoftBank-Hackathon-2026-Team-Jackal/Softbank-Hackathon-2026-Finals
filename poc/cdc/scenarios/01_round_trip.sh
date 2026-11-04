@@ -10,7 +10,7 @@ step "스키마 복사";           $T 01_copy_schema.sh pg-a pg-b
 step "복제 시작";             $T 02_start_replication.sh pg-a pg-b
 step "동기화 대기";           $T 03_wait_sync.sh pg-a pg-b
 sleep 5
-step "전환 pg-a → pg-b";      $T 05_switchover.sh pg-a pg-b >/dev/null
+step "전환 pg-a → pg-b";      $T $SW pg-a pg-b >/dev/null
 sleep 10
 step "롤백 pg-b → pg-a";      $T 06_rollback.sh pg-a >/dev/null
 sleep 5

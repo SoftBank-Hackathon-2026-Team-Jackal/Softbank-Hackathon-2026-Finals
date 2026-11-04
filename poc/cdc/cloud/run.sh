@@ -14,11 +14,13 @@ else
   cmd="${1:?명령}"
 fi
 
-# AWS-RunShellScript 는 sh 로 실행하므로, 명령을 파일로 쓴 뒤 bash 로 실행한다
+# AWS-RunShellScript 는 sh 로 실행하므로, 명령을 파일로 쓴 뒤 bash 로 실행한다.
+# 실행 중인 명령이 있을 때 다른 명령을 보내도 서로의 파일을 덮어쓰지 않도록 파일 이름을 명령마다 다르게 한다
 body="$(python3 -c '
-import json, sys
+import json, sys, uuid
 script = "set -o pipefail\ncd /opt/cdc\nexport REMOTE_NODES=pg-b\n" + sys.argv[1] + "\n"
-print(json.dumps({"commands": ["cat > /tmp/cdc-cmd.sh <<'"'"'CDC_EOF'"'"'\n" + script + "CDC_EOF", "bash /tmp/cdc-cmd.sh"],
+f = "/tmp/cdc-cmd-" + uuid.uuid4().hex + ".sh"
+print(json.dumps({"commands": ["cat > " + f + " <<'"'"'CDC_EOF'"'"'\n" + script + "CDC_EOF", "bash " + f + "; rc=$?; rm -f " + f + "; exit $rc"],
                   "executionTimeout": ["1800"]}))' "$cmd")"
 cid="$(aws ssm send-command --instance-ids "$iid" --document-name AWS-RunShellScript \
         --parameters "$body" --timeout-seconds 600 --query Command.CommandId --output text)"

@@ -69,7 +69,7 @@ services:
 
   # 스크립트 실행용. 실제 환경에서는 같은 스크립트를 URL만 바꿔 실행한다
   toolbox:
-    image: postgres:16
+    build: ./toolbox
     profiles: ["tools"]
     working_dir: /poc
     entrypoint: ["bash"]
