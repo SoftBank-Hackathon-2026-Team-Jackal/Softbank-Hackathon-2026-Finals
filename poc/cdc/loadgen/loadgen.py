@@ -9,10 +9,11 @@
 
 출력 (OUT_DIR):
   committed_ids.txt       커밋이 확인된 새 주문 ID (유실 검증용)
-  loadgen-timeline.jsonl  1초마다 성공 수, 에러 수, 최대 지연
+  loadgen-timeline.jsonl  1초마다 성공 수, 에러 수, 최대 지연, 최근 60초 지연 백분위수(p50/p95/p99)
   loadgen-summary.json    종료(SIGTERM) 시 요약
 """
 
+import collections
 import json
 import os
 import random
@@ -31,6 +32,8 @@ stop = threading.Event()
 lock = threading.Lock()
 stats = {"ok": 0, "err": 0, "latencies_ms": [], "errors": {}, "by_op": {}}
 window = {"ok": 0, "err": 0, "max_ms": 0.0}
+recent = collections.deque()  # (시각, 지연 ms). 최근 60초 백분위수 계산용
+RECENT_SEC = 60
 ids_file = open(os.path.join(OUT, "committed_ids.txt"), "w", buffering=1)
 bounds = {}
 
@@ -150,6 +153,7 @@ def worker(wid):
                 stats["by_op"][name] = stats["by_op"].get(name, 0) + 1
                 window["ok"] += 1
                 window["max_ms"] = max(window["max_ms"], ms)
+                recent.append((time.monotonic(), ms))
                 if name == "place_order":
                     ids_file.write(f"{oid}\n")
         except Exception as e:  # noqa: BLE001 - 모든 실패를 에러로 센다
@@ -179,6 +183,12 @@ def ticker():
             with lock:
                 row = {"t": round(time.time(), 3), **window}
                 window.update(ok=0, err=0, max_ms=0.0)
+                cutoff = time.monotonic() - RECENT_SEC
+                while recent and recent[0][0] < cutoff:
+                    recent.popleft()
+                lat = sorted(ms for _, ms in recent)
+            for q in (50, 95, 99):
+                row[f"p{q}_60s"] = round(lat[min(len(lat) - 1, len(lat) * q // 100)], 1) if lat else None
             f.write(json.dumps(row) + "\n")
             print(f"ok={row['ok']:3d}/s err={row['err']} max={row['max_ms']:.0f}ms", flush=True)
 
