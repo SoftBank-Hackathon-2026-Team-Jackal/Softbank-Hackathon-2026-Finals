@@ -67,6 +67,25 @@ def now_ms():
     return time.monotonic_ns() // 1_000_000
 
 
+def fault_point(name):
+    """장애 주입: FAULT_AT=<지점> 이면 결과 폴더에 .fault-<지점> 을 만들고, 호스트가 장애를 일으킨 뒤
+    .fault-<지점>.done 을 만들 때까지 최대 5초 기다린다 (poc/demo/bin/fault)."""
+    if os.environ.get("FAULT_AT") != name:
+        return
+    log(f"장애 주입 지점: {name}")
+    p = os.path.join(RESULTS_DIR, f".fault-{name}")
+    open(p, "w").close()
+    for _ in range(100):
+        if os.path.exists(p + ".done"):
+            break
+        time.sleep(0.05)
+    for f in (p, p + ".done"):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+
+
 def env_key(node):
     return node.upper().replace("-", "_")
 
@@ -318,6 +337,7 @@ def main():
             pgb.reopen()   # PAUSE 응답을 기다리던 연결은 버리고 새로 연다
             raise Abort(f"PAUSE가 {PAUSE_TIMEOUT_SEC:g}초 안에 끝나지 않았습니다 (긴 트랜잭션). 전환을 중단합니다")
         ts["paused"] = now_ms()
+        fault_point("paused")
 
         # 2. marker 커밋: remote_apply 라서 대상에 반영된 뒤에 돌아온다.
         #    대상이 응답하지 않으면 타이머가 취소를 보낸다. 취소되면 커밋은 로컬에만 된 채로 돌아오므로 대상에서 다시 확인한다
@@ -361,9 +381,16 @@ def main():
         finally:
             st["rev_enabled"] = True
         ts["subs"] = now_ms()
+        fault_point("forward-disabled")
 
         # 5. 대상 변경 → RESUME
-        log("5. PgBouncer 대상 변경 → RESUME")
+        #    4단계 뒤로는 대상에 보내는 SQL이 없으므로, 그사이 대상이 죽어도 모르고 죽은 DB로 트래픽을 보낼 수 있다.
+        #    대상 변경 직전에 한 번 더 확인한다 (1ms 안팎). 실패하면 아래 except 가 원래 DB로 되돌린다
+        log("5. 대상 생존 확인 → PgBouncer 대상 변경 → RESUME")
+        try:
+            one(tgt, "select 1")
+        except psycopg.OperationalError as e:
+            raise Abort(f"{to} 에 접속할 수 없습니다 ({str(e).splitlines()[0]}). 전환을 중단합니다")
         st["retargeted"] = True
         pgb_set_target(to)
         pgb.cmd("RELOAD;")
@@ -374,7 +401,7 @@ def main():
         pause_ms = ts["resumed"] - ts["start"]
         log(f"   쓰기 중단 {pause_ms}ms")
     except BaseException:
-        rollback_attempt(st, frm, fwd, rev, src, tgt, pgb)
+        rollback_attempt(st, frm, to, fwd, rev, src, tgt, pgb, ts)
         for c in (src_v, tgt_v):
             try:
                 c.rollback() if not c.autocommit else c.execute("ROLLBACK")
@@ -392,6 +419,9 @@ def main():
             break
         except psycopg.errors.ObjectInUse:
             time.sleep(0.2)   # 원본 쪽 walsender 가 아직 종료 중
+        except psycopg.OperationalError as e:
+            log(f"주의: {to} 접속이 끊겨 {fwd} 를 삭제하지 못했습니다 ({str(e).splitlines()[0]})")
+            break
     else:
         log(f"주의: {fwd} 를 삭제하지 못했습니다. 나중에 직접 삭제하세요")
     ts["dropped"] = now_ms()
@@ -443,7 +473,7 @@ def main():
     sys.exit(0 if verify_ok is not False else 3)
 
 
-def rollback_attempt(st, frm, fwd, rev, src, tgt, pgb):
+def rollback_attempt(st, frm, to, fwd, rev, src, tgt, pgb, ts):
     """전환 도중 실패: 구독을 원래대로 되돌린 뒤 원래 DB로 RESUME 한다."""
     def safe(desc, fn):
         try:
@@ -469,14 +499,35 @@ def rollback_attempt(st, frm, fwd, rev, src, tgt, pgb):
         pgb_set_target(frm)
         safe("RELOAD", lambda: (pgb.cmd("RELOAD;"), pgb.cmd("RECONNECT app;")))
     if st["paused"]:
-        log(f"중단: PgBouncer RESUME (대상은 계속 {frm})")
         safe("RESUME", lambda: pgb.cmd("RESUME app;"))
+        log(f"중단: PgBouncer RESUME, 대상은 계속 {frm} (쓰기 중단 {now_ms() - ts['start']}ms)")
     if st["sync_on"]:
         log("중단: 동기 복제 창 닫음")
         safe("동기 복제 창 해제", lambda: sync_window_off(connect(frm)))
     if st["prepared"]:
         log(f"중단: 미리 만든 역방향 구독 {rev} 삭제")
-        safe("DROP", lambda: connect(frm).execute(sql.SQL("DROP SUBSCRIPTION IF EXISTS {}").format(sql.Identifier(rev))))
+
+        def drop_rev():
+            c = connect(frm)
+            try:
+                c.execute(sql.SQL("DROP SUBSCRIPTION IF EXISTS {}").format(sql.Identifier(rev)))
+            except psycopg.OperationalError:
+                # {to} 가 죽어서 원격 슬롯을 지울 수 없으면 슬롯 연결을 끊고 구독만 지운다
+                c.execute(sql.SQL("ALTER SUBSCRIPTION {} DISABLE").format(sql.Identifier(rev)))
+                c.execute(sql.SQL("ALTER SUBSCRIPTION {} SET (slot_name = NONE)").format(sql.Identifier(rev)))
+                c.execute(sql.SQL("DROP SUBSCRIPTION IF EXISTS {}").format(sql.Identifier(rev)))
+                log(f"주의: {to} 에 남은 복제 슬롯 {rev} 는 {to} 가 돌아오면 지워야 합니다")
+        safe("DROP", drop_rev)
+    if st["fwd_disabled"] and not tgt_alive(tgt):
+        log(f"주의: {to} 에 접속할 수 없어 정방향 구독을 켜지 못했습니다. {to} 가 돌아오면 ALTER SUBSCRIPTION {fwd} ENABLE")
+
+
+def tgt_alive(conn):
+    try:
+        conn.execute("select 1")
+        return True
+    except Exception:
+        return False
 
 
 if __name__ == "__main__":
