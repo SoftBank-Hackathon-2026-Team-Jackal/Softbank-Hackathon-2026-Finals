@@ -174,6 +174,8 @@ CREATE SUBSCRIPTION mig_sub
 > **같은 날 2단계 완료:** [`poc/cdc/cloud`](../poc/cdc/cloud/README.md). AWS `prod`와 GCP `sbh26-prod`를 WireGuard로 잇고 같은 스크립트로 왕복했습니다. 쓰기 중단은 처음 1.8초였고, 역방향 구독을 PAUSE 전에 미리 만들고 체크섬을 병렬로 계산하도록 바꿔 약 1초로 줄였습니다. 이 방식은 5장 절차에도 반영했습니다.
 >
 > **5GB 시나리오:** 쇼핑몰 4.4GB, 초당 200 트랜잭션으로 왕복했습니다. 쓰기 중단 1.3~1.5초, 에러 0, 유실 0, 체크섬 일치입니다. 초기 복사는 13.2MB/s로, 네트워크(156MB/s)가 아니라 대상 DB의 인덱스 갱신이 병목이었습니다. 자세한 내용은 [2단계 README](../poc/cdc/cloud/README.md)의 5GB 시나리오 절에 있습니다.
+>
+> **2026-11-04 빠른 전환:** 동기 복제 창, 시퀀스와 검증을 PAUSE 밖으로 빼기, 연결 유지, 전환 시점 확인을 `05_switchover_fast.py`에 적용해 AWS ↔ GCP 쓰기 중단을 약 870ms에서 85~134ms로 줄였습니다. PostgreSQL 17 `pg_createsubscriber`로 초기 복사를 물리 복사로 바꾸는 경로도 로컬에서 동작을 확인했습니다. 정리는 [전환 중단을 짧게 만드는 기술 정리](./cdc-short-switchover.md)에 있습니다.
 
 ### 성공 기준
 
