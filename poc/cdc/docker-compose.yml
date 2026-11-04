@@ -2,7 +2,7 @@
 name: cdc-poc
 
 x-pg: &pg
-  image: postgres:16
+  image: ${PG_IMAGE:-postgres:16}   # 물리 복사(06_physical_copy.sh)는 postgres:17 이상
   shm_size: 1gb   # 병렬 쿼리용 공유 메모리. 기본 64MB로는 대용량에서 실패한다
   command:
     - postgres
@@ -37,13 +37,34 @@ services:
   pg-a:
     <<: *pg
     volumes:
+      - ./init/00-hba-replication.sh:/docker-entrypoint-initdb.d/00-hba-replication.sh:ro
       - ./init/roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
       - ./init/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
 
   pg-b:
     <<: *pg
     volumes:
+      - ./init/00-hba-replication.sh:/docker-entrypoint-initdb.d/00-hba-replication.sh:ro
       - ./init/roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+      - pg-b-data:/var/lib/postgresql/data
+
+  # 물리 복사(B1): pg-b 를 멈춘 상태에서 pg-b 의 데이터 디렉터리를 pg_basebackup 으로 채우고
+  # pg_createsubscriber 로 논리 구독자로 바꾼다. scenarios/06_physical_copy.sh 가 실행한다
+  pg-b-clone:
+    image: ${PG_IMAGE:-postgres:16}
+    profiles: ["clone"]
+    user: postgres
+    working_dir: /tmp
+    entrypoint: ["bash", "/poc/scripts/physical_clone.sh"]
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      SRC_HOST: pg-a
+      REPL_PASSWORD: replicator
+      PUB_PASSWORD: postgres
+    volumes:
+      - ./scripts:/poc/scripts:ro
+      - ./results:/poc/results
+      - pg-b-data:/var/lib/postgresql/data
 
   pgbouncer:
     build: ./pgbouncer
@@ -69,7 +90,10 @@ services:
 
   # 스크립트 실행용. 실제 환경에서는 같은 스크립트를 URL만 바꿔 실행한다
   toolbox:
-    image: postgres:16
+    build:
+      context: ./toolbox
+      args:
+        PG_IMAGE: ${PG_IMAGE:-postgres:16}
     profiles: ["tools"]
     working_dir: /poc
     entrypoint: ["bash"]
@@ -87,3 +111,4 @@ services:
 
 volumes:
   pgb-runtime:
+  pg-b-data:

@@ -6,6 +6,12 @@ source "$(dirname "$0")/lib.sh"
 db="${1:?노드}"
 [[ "${RESET_OK:-}" == yes ]] || die "RESET_OK=yes 가 필요합니다 ($db 의 데이터를 모두 지웁니다)"
 
+# 빠른 전환이 중간에 실패해 동기 복제 창이 남아 있으면, 아래 구독 변경의 커밋이 동기 대기에 걸려 멈춘다.
+# 그래서 가장 먼저 해제한다 (ALTER SYSTEM 은 트랜잭션 안에서 실행할 수 없으므로 한 문장씩)
+q "$db" "ALTER SYSTEM RESET synchronous_standby_names" >/dev/null
+q "$db" "ALTER SYSTEM RESET synchronous_commit" >/dev/null
+q "$db" "select pg_reload_conf()" >/dev/null
+
 for s in $(q "$db" "select subname from pg_subscription"); do
   # 발행자가 이미 지워졌을 수 있으므로 슬롯 연결을 끊고 지운다
   q "$db" "ALTER SUBSCRIPTION $s DISABLE" >/dev/null

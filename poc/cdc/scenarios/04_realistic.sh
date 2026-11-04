@@ -34,7 +34,7 @@ wait $batch_pid || true
 step "실시간 동기화 ${STEADY_SEC}초 관찰"
 for ((i = 0; i < STEADY_SEC / 5; i++)); do POLL_SEC=1 $T 03_wait_sync.sh pg-a pg-b 5 2>&1 | tail -1; sleep 4; done
 
-step "전환 pg-a → pg-b";   $T 05_switchover.sh pg-a pg-b >/dev/null
+step "전환 pg-a → pg-b";   $T $SW pg-a pg-b >/dev/null
 step "새 DB로 ${HOLD_SEC}초 운영"; sleep "$HOLD_SEC"
 step "롤백 pg-b → pg-a";   $T 06_rollback.sh pg-a >/dev/null
 sleep 10
@@ -73,11 +73,11 @@ out = {
   "max_retained_wal_mb": round(max(r["retained_bytes"] for r in rep) / 2**20, 1),
   "steady_lag_bytes_max": max((r["lag_bytes"] for r in steady), default=None),
   "wireguard_mbps": iperf,
-  "switchovers": [{k: s[k] for k in ("from", "to", "write_pause_ms", "verify_in_pause", "steps_ms")} for s in sw],
+  "switchovers": [{k: s.get(k) for k in ("from", "to", "impl", "write_pause_ms", "verify_in_pause", "verify_ok", "steps_ms")} for s in sw],
   "loadgen": load,
   "full_checksum_sec": v1 - v0, "checksum_match": same, "lost": {"pg-a": lost_a, "pg-b": lost_b},
 }
 out["pass"] = (same and lost_a == 0 and lost_b == 0 and load["errors"] == 0
-               and all(s["write_pause_ms"] <= 2000 for s in sw))
+               and all(s["write_pause_ms"] <= 2000 and s.get("verify_ok") is not False for s in sw))
 print(json.dumps(out, indent=2, ensure_ascii=False))
 PY

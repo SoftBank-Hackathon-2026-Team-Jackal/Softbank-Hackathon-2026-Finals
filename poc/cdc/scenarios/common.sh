@@ -2,6 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 T=bin/tool
+# 전환 스크립트: fast(05_switchover_fast.py, 기본) | classic(05_switchover.sh)
+export SWITCHOVER="${SWITCHOVER:-fast}"
+if [[ "$SWITCHOVER" == classic ]]; then SW=05_switchover.sh; else SW=05_switchover_fast.py; fi
 step() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
 
 fresh_start() {
@@ -9,6 +12,7 @@ fresh_start() {
   docker compose --profile load --profile tools down -v --remove-orphans >/dev/null 2>&1 || true
   rm -f results/*.json results/*.jsonl results/*.txt
   docker compose up -d --build --wait >/dev/null
+  docker compose --profile tools build -q toolbox   # PG_IMAGE 가 바뀌면 다시 빌드해야 한다
   # 2단계(클라우드): 원격 노드는 down -v 로 지워지지 않으므로 SQL로 초기화한다
   for n in ${REMOTE_NODES:-}; do
     docker compose --profile tools run --rm -T -e RESET_OK=yes toolbox scripts/reset_node.sh "$n"
