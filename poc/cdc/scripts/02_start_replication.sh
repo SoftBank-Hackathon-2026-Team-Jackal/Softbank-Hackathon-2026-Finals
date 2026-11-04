@@ -9,6 +9,10 @@ if [[ "${SKIP_RI_FIX:-0}" != "1" ]]; then
   fix_replica_identity "$src"
 fi
 
+# 초기 복사는 replicator 권한으로 SELECT한다. 초기화 이후 앱이 만든 테이블(예: 데모 앱의 chat_messages)은
+# 권한이 없어서 tablesync worker가 permission denied로 무한 재시도하므로, 복제 직전에 다시 부여한다.
+q "$src" "GRANT SELECT ON ALL TABLES IN SCHEMA public TO replicator" >/dev/null
+
 q "$src" "select 1 from pg_publication where pubname = 'mig_pub'" | grep -q 1 \
   || q "$src" "CREATE PUBLICATION mig_pub FOR ALL TABLES" >/dev/null
 
