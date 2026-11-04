@@ -3,6 +3,8 @@
 # 프로젝트 이름은 PoC와 같은 cdc-poc라서, PoC의 bin/tool(toolbox)이 같은 네트워크에서 동작한다.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+# 물리 초기 복사(pg_createsubscriber)는 PostgreSQL 17 이상이 필요하다 (bin/lib.sh와 같은 기본값)
+export PG_IMAGE="${PG_IMAGE:-postgres:17}"
 export DEMO_APP_SRC="${DEMO_APP_SRC:-$HOME/workspace/jackal-demo-app}"
 [[ -f "$DEMO_APP_SRC/go.mod" ]] || { echo "데모 앱 저장소가 없습니다: $DEMO_APP_SRC (DEMO_APP_SRC로 지정)" >&2; exit 1; }
 exec docker compose -p cdc-poc -f "$here/../cdc/docker-compose.yml" -f "$here/compose.yml" "$@"

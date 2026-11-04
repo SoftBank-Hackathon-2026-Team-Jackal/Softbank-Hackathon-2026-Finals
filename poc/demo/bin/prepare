@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # 리허설 초기 상태를 만든다: 앱은 env-a(100:0), DB는 pg-a, pg-a → pg-b 복제가 streaming, 부하 생성기 동작 중.
 # 에이전트는 따로 띄운다. 이 상태에서 bin/migrate를 실행하면 앱과 DB를 한 번에 옮긴다.
-set -euo pipefail
-cd "$(dirname "$0")/.."
-# PoC의 bin/tool은 poc/cdc Compose만 보므로 데모 컨테이너를 orphan으로 경고한다
-export COMPOSE_IGNORE_ORPHANS=true
-T=../cdc/bin/tool
-step() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
+# 사용법: SCALE=1 RATE=50 COPY=logical bin/prepare
+#   COPY=logical   스키마 덤프 + 논리 복제 초기 복사 (대상이 행을 하나씩 넣으며 인덱스를 갱신)
+#   COPY=physical  pg_basebackup으로 블록을 그대로 복사한 뒤 pg_createsubscriber로 논리 구독자로 바꿈 (PG17 이상)
+source "$(dirname "$0")/lib.sh"
 
 step "환경 초기화"
 bin/demo --profile load --profile tools down -v --remove-orphans >/dev/null 2>&1 || true
 rm -f ../cdc/results/*.json ../cdc/results/*.jsonl ../cdc/results/*.txt
 bin/demo up -d --build --wait >/dev/null
+# PG_IMAGE가 바뀌면 toolbox(psql, pg_dump, psycopg)도 같은 버전으로 다시 빌드해야 한다
+bin/demo --profile tools build -q toolbox
 # 앱이 시작하면서 chat_messages를 만든 뒤에 스키마를 복사해야 pg-b에도 생긴다
 until bin/demo exec -T pg-a psql -U postgres -d app -Atc "select to_regclass('chat_messages')" | grep -q chat; do sleep 1; done
 
@@ -21,10 +21,26 @@ $T seed.sh pg-a "${SCALE:-1}"
 step "부하 생성 시작 (초당 ${RATE:-50}건)"
 RATE="${RATE:-50}" bin/demo --profile load up -d --build --no-deps loadgen >/dev/null
 
-step "스키마 덤프 (pg_dump --schema-only) pg-a → pg-b"
-$T 01_copy_schema.sh pg-a pg-b
-step "초기 복사 + 변경 따라잡기 (논리 복제)"
-$T 02_start_replication.sh pg-a pg-b
+if [[ "${COPY:-logical}" == physical ]]; then
+  step "물리 복사 준비: marker 테이블, REPLICA IDENTITY, 복제 권한 (pg-a)"
+  $T 02p_prepare_physical.sh pg-a
+  step "물리 복사: pg-b 중지 → pg_basebackup → pg_createsubscriber"
+  bin/demo stop pg-b 2>&1 | tail -1
+  bin/demo --profile clone run --rm -T pg-b-clone 2>&1 | grep -E "^(\[|\{)"   # PostgreSQL 서버 로그는 뺀다
+  bin/demo up -d --wait pg-b 2>&1 | tail -1
+  step "구독 설정을 기존 스크립트와 맞춤 (origin = none, replicator 계정), 노드 이름 pg-b"
+  # 물리 복사는 pg-a의 DB 설정까지 복사하므로 메시지의 db_node 표시용 노드 이름을 다시 지정한다
+  bin/demo exec -T pg-b psql -U postgres -d app -XAtq -v ON_ERROR_STOP=1 \
+    -c "ALTER SUBSCRIPTION mig_from_pg_a SET (origin = none)" \
+    -c "ALTER SUBSCRIPTION mig_from_pg_a CONNECTION 'host=pg-a port=5432 dbname=app user=replicator password=replicator'" \
+    -c "ALTER DATABASE app SET app.node_name = 'pg-b'"
+  step "변경 따라잡기 (논리 복제)"
+else
+  step "스키마 덤프 (pg_dump --schema-only) pg-a → pg-b"
+  $T 01_copy_schema.sh pg-a pg-b
+  step "초기 복사 + 변경 따라잡기 (논리 복제)"
+  $T 02_start_replication.sh pg-a pg-b
+fi
 $T 03_wait_sync.sh pg-a pg-b 600 2>&1 | awk 'NR % 5 == 1 || /streaming/'
 bin/weight 100 0
 step "준비 완료"

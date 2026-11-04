@@ -53,6 +53,8 @@ button.big { padding: 9px 18px; font-size: 14px; }
 select, input[type=number] { font: inherit; font-size: 13px; padding: 5px 6px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
 input[type=number] { width: 64px; }
 .hint { color: var(--muted); font-size: 12px; }
+.readyline { font-size: 12.5px; color: var(--ink-2); margin: 2px 0 6px 72px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.readyline .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .jobline { margin-top: 8px; font-size: 12.5px; color: var(--ink-2); min-height: 18px; }
 .spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--axis); border-top-color: var(--ink); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -159,13 +161,22 @@ pre.log .hd { color: #8fc3ff; } pre.log .st { color: #ffd479; font-weight: 600; 
         <button class="primary big" id="btnMigrate">▶ 이전 실행</button>
         <button class="big" id="btnRollback">↩ 되돌리기</button>
         <button class="big" id="btnVerify">✓ 검증</button>
+        <select id="swMode" title="DB 전환 스크립트">
+          <option value="fast">빠른 전환 (PAUSE 안 작업 최소화)</option>
+          <option value="classic">기존 전환 (PAUSE 안 체크섬)</option>
+        </select>
       </div>
+      <div class="readyline" id="readyLine"></div>
       <div class="row"><span class="label">에이전트</span>
         <button id="btnAgentsStart">시작</button><button id="btnAgentsStop">중지</button>
         <label class="hint"><input type="checkbox" id="offline"> 준비된 대사 (API 미사용)</label>
       </div>
       <div class="row"><span class="label">환경</span>
         <button id="btnPrepare">처음부터 준비</button>
+        <select id="copyMode" title="초기 복사 방식">
+          <option value="logical">논리 복사 (pg_dump + copy_data)</option>
+          <option value="physical">물리 복사 (pg_basebackup + pg_createsubscriber)</option>
+        </select>
         <select id="scale" title="기존 데이터 크기">
           <option value="1">데이터 약 50MB</option>
           <option value="5">약 250MB</option>
@@ -242,8 +253,9 @@ pre.log .hd { color: #8fc3ff; } pre.log .st { color: #ffd479; font-weight: 600; 
       <table class="tbl faults">
         <tr><th>장애</th><th>주입 방법</th><th>기대 결과</th><th></th></tr>
         <tr><td><b>앱 강제 종료</b></td><td>트래픽 50:50에서 app-a를 SIGKILL (정상 종료 절차 없음), 10초 뒤 원래대로</td><td>HAProxy가 감지해 env-b로 보냄. 사용자 5xx 0, 메시지 유실 0</td><td><button data-fault="kill-app">주입</button></td></tr>
-        <tr><td><b>대기 DB 몰래 수정</b></td><td>대기 DB의 채팅 메시지 하나를 복제를 거치지 않고 고친 뒤 DB 전환 시도</td><td>PAUSE 안 체크섬 검증이 불일치를 잡아 전환 거부, 주 DB 그대로</td><td><button data-fault="tamper">주입</button></td></tr>
+        <tr><td><b>대기 DB 몰래 수정</b></td><td>대기 DB의 채팅 메시지 하나를 복제를 거치지 않고 고친 뒤 DB 전환 시도 (기존 전환으로 시험)</td><td>PAUSE 안 체크섬 검증이 불일치를 잡아 전환 거부, 주 DB 그대로</td><td><button data-fault="tamper">주입</button></td></tr>
         <tr><td><b>전환 도중 대기 DB 다운</b></td><td>DB 전환 중 정방향 구독을 끈 직후 대상 DB를 SIGKILL</td><td>원래 DB로 RESUME, 대상 DB가 돌아오면 복제 자동 재개</td><td><button data-fault="kill-target">주입</button></td></tr>
+        <tr><td><b>배치 잠금 중 전환</b></td><td>배치가 상품 행 전체를 5초 동안 잠근 상태에서 빠른 전환 시도, 끝나면 원래 DB로 되돌림</td><td>잠금이 풀릴 때까지 PAUSE하지 않고 기다림. 쓰기 중단은 평소 수준 (1초 미만)</td><td><button data-fault="batch-switch">주입</button></td></tr>
       </table>
       <div id="faultResults"></div>
     </div>
@@ -278,12 +290,12 @@ async function act(name, body = {}) {
 }
 function flash(msg) { $("jobLine").innerHTML = `<span style="color:var(--crit)">${esc(msg)}</span>`; }
 
-$("btnMigrate").onclick = () => act("migrate");
-$("btnRollback").onclick = () => act("rollback");
+$("btnMigrate").onclick = () => act("migrate", { switchover: $("swMode").value });
+$("btnRollback").onclick = () => act("rollback", { switchover: $("swMode").value });
 $("btnVerify").onclick = () => act("verify");
 $("btnAgentsStart").onclick = () => act("agents-start", { offline: $("offline").checked });
 $("btnAgentsStop").onclick = () => act("agents-stop");
-$("btnPrepare").onclick = () => { if (confirmInline("btnPrepare")) act("prepare", { scale: +$("scale").value, rate: +$("rate").value }); };
+$("btnPrepare").onclick = () => { if (confirmInline("btnPrepare")) act("prepare", { scale: +$("scale").value, rate: +$("rate").value, copy: $("copyMode").value }); };
 $("btnLoadStart").onclick = () => act("load-start", { rate: +$("rate").value });
 $("btnLoadStop").onclick = () => act("load-stop");
 $("btnAppAStart").onclick = () => act("app-a-start");
@@ -345,7 +357,18 @@ function renderPills() {
   ].join("");
 }
 
+function renderReady() {
+  const r = S.readiness;
+  if (!r) { $("readyLine").innerHTML = ""; return; }
+  const color = r.ready ? "var(--good)" : "var(--warn, #d9a21b)";
+  const top = (r.top || [])[0];
+  $("readyLine").innerHTML = `<span class="dot" style="background:${color}"></span>
+    <b>전환 가능 시점: ${r.ready ? "지금 가능" : "대기"}</b>
+    <span class="hint">가장 긴 트랜잭션 ${fmtNum(r.longest_xact_ms)}ms · 잠금 대기 ${r.lock_waiters} · 커밋 ${r.commits_per_sec ?? "-"}/s${r.ready ? "" : " · " + esc(r.reasons.join(", "))}${!r.ready && top ? ` · 가장 오래된 작업: ${esc(top.usename)} "${esc(top.query)}"` : ""}</span>`;
+}
+
 function renderControls() {
+  renderReady();
   const j = S.job || {}, busy = j.running;
   const p = S.primary;
   $("btnMigrate").disabled = busy || p !== "pg-a";
@@ -355,7 +378,7 @@ function renderControls() {
   ["btnLoadStart", "btnLoadStop", "btnAppAStart", "btnAppAStop"].forEach((id) => $(id).disabled = busy);
   document.querySelectorAll("[data-w], [data-fault]").forEach((b) => b.disabled = busy);
   const rep = S.replication || {};
-  document.querySelectorAll('[data-fault="tamper"], [data-fault="kill-target"]').forEach((b) => {
+  document.querySelectorAll('[data-fault="tamper"], [data-fault="kill-target"], [data-fault="batch-switch"]').forEach((b) => {
     if (rep.phase !== "streaming") { b.disabled = true; b.title = "복제가 실시간 동기화 상태일 때 실행할 수 있습니다"; } else b.title = "";
   });
   $("btnAgentsStart").disabled = !!S.agents?.running;
@@ -462,7 +485,10 @@ function renderCdc() {
     return `<div class="step ${cls}"><i></i>${l}</div>`;
   }).join("");
   $("replDir").textContent = `${r.src} → ${r.dst}`;
-  $("replNote").textContent = r.src === "pg-b" ? "전환 후 역방향 복제: pg-a를 최신으로 유지해 언제든 되돌릴 수 있게 합니다" : (r.sub ? `구독 ${r.sub}` : "");
+  const pc = S.physical_clone;
+  $("replNote").textContent = r.src === "pg-b" ? "전환 후 역방향 복제: pg-a를 최신으로 유지해 언제든 되돌릴 수 있게 합니다"
+    : pc ? `물리 복사로 초기화: ${fmtBytes(pc.bytes)}, pg_basebackup ${(pc.basebackup_ms / 1000).toFixed(1)}초 + 구독자 변환 ${(pc.createsubscriber_ms / 1000).toFixed(1)}초`
+    : (r.sub ? `구독 ${r.sub}` : "");
   const pct = r.src_size ? Math.min(100, Math.round(r.dst_size * 100 / r.src_size)) : 0;
   $("cdcKv").innerHTML = `
     <div><span>단계</span><b>${esc(phaseName(r.phase))}</b></div>
@@ -503,6 +529,13 @@ const SW = {
   pause_wait_inflight: ["PAUSE: 진행 중 트랜잭션 대기", false],
   marker_wait: ["marker 도착 확인 (복제 따라잡음)", false],
   verify: ["체크섬 검증", false],
+  "seq_prebump (PAUSE 전)": ["시퀀스 미리 올리기", true],
+  "sync_window_on (PAUSE 전)": ["동기 복제 창 열기 (marker만 remote_apply)", true],
+  "wait_ready (PAUSE 전)": ["전환 가능 시점 대기", true],
+  snapshot_seq_check: ["스냅샷 고정 · 시퀀스 확인", false],
+  switch_subscriptions: ["정방향 끄기 · 역방향 켜기", false],
+  "drop_forward (RESUME 후)": ["정방향 구독 삭제", true],
+  "verify (RESUME 후)": ["전환 순간 스냅샷 비교", true],
   drop_forward_seq_sync_enable_reverse: ["정방향 삭제 · 시퀀스 동기화 · 역방향 켜기", false],
   disable_forward_seq_sync_enable_reverse: ["정방향 끄기 · 시퀀스 동기화 · 역방향 켜기", false],
   retarget_resume: ["PgBouncer 대상 변경 · RESUME", false],
@@ -515,12 +548,13 @@ function renderSwitchover() {
   const max = Math.max(...steps.map(([, v]) => v), 1);
   $("swNote").textContent = `${s.from} → ${s.to} · ${clock(s.t)}`;
   $("swDetail").innerHTML = `
-    <div class="hero"><b>${fmtNum(s.write_pause_ms)}ms</b><span>쓰기 중단 (PAUSE → RESUME). 이 동안 요청은 실패하지 않고 PgBouncer에서 기다립니다</span></div>
+    <div class="hero"><b>${fmtNum(s.write_pause_ms)}ms</b><span>쓰기 중단 (PAUSE → RESUME). 이 동안 요청은 실패하지 않고 PgBouncer에서 기다립니다<br>
+      ${s.impl === "fast" ? `빠른 전환 · 전환 순간 스냅샷 비교(${esc(s.verify_after)}) ${s.verify_ok === true ? '<span class="badge ok">✓ 일치</span>' : s.verify_ok === false ? '<span class="badge bad">✗ 불일치</span>' : ""}` : "기존 전환 · PAUSE 안 체크섬 검증"}</span></div>
     <div class="bars">${steps.map(([k, v]) => {
       const [label, outside] = SW[k] || [k, false];
       return `<div class="r ${outside ? "outside" : ""}"><span>${esc(label)}${outside ? " <small>(쓰기 중단 밖)</small>" : ""}</span><div class="track"><div style="width:${v * 100 / max}%"></div></div><span class="v">${v}ms</span></div>`;
     }).join("")}</div>
-    ${list.length > 1 ? `<table class="tbl" style="margin-top:10px"><tr><th>시각</th><th>방향</th><th class="num">쓰기 중단</th></tr>${list.slice(-5).reverse().map((x) => `<tr><td>${clock(x.t)}</td><td>${x.from} → ${x.to}</td><td class="num">${x.write_pause_ms}ms</td></tr>`).join("")}</table>` : ""}`;
+    ${list.length > 1 ? `<table class="tbl" style="margin-top:10px"><tr><th>시각</th><th>방향</th><th>방식</th><th class="num">쓰기 중단</th></tr>${list.slice(-5).reverse().map((x) => `<tr><td>${clock(x.t)}</td><td>${x.from} → ${x.to}</td><td>${x.impl === "fast" ? "빠른" : "기존"}</td><td class="num">${x.write_pause_ms}ms</td></tr>`).join("")}</table>` : ""}`;
 }
 
 // ───────── 시계열 ─────────
@@ -600,13 +634,14 @@ function renderSplits() {
   split("splitDb", c?.by_db_node, "pg-a", "pg-b");
 }
 
-const FAULT_NAMES = { "kill-app": "앱 강제 종료", tamper: "대기 DB 몰래 수정", "kill-target": "전환 도중 대기 DB 다운" };
+const FAULT_NAMES = { "kill-app": "앱 강제 종료", tamper: "대기 DB 몰래 수정", "kill-target": "전환 도중 대기 DB 다운", "batch-switch": "배치 잠금 중 전환" };
 function faultMeasure(f) {
   if (f.note) return esc(f.note);
+  if (f.fault === "batch-switch") return `${esc(f.from)} → ${esc(f.to)} 전환 가능 시점까지 <b>${fmtNum(f.wait_ready_ms)}ms 대기</b> · 쓰기 중단 <b>${f.write_pause_ms ?? "-"}ms</b> · 이후 ${esc(f.primary_after)}로 되돌림`;
   if (f.fault === "kill-app") return `${esc(f.target)} 감지까지 ${fmtNum(f.detect_ms)}ms · HAProxy 재시도 ${f.retries}건 · 사용자 5xx <b>${f.client_5xx}건</b>`;
   const base = `${esc(f.from)} → ${esc(f.to)} 전환 ${f.refused ? "<b>거부</b>" : "진행됨"} · 쓰기 중단 ${f.write_pause_ms ?? "-"}ms · 주 DB ${esc(f.primary_after)}`;
   if (f.fault === "tamper") return `${base} · 수정한 메시지 #${f.message_id}는 원래대로 되돌림`;
-  return `${base} · 복제 재개까지 ${fmtNum(f.recover_ms)}ms (지연 ${fmtBytes(f.lag_after)})`;
+  return `${base}${f.switchover ? ` (${f.switchover === "fast" ? "빠른" : "기존"} 전환)` : ""} · 복제 재개까지 ${fmtNum(f.recover_ms)}ms (지연 ${fmtBytes(f.lag_after)})`;
 }
 let faultKey = null;
 function renderFaults() {

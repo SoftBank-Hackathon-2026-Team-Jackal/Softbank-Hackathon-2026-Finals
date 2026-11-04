@@ -98,6 +98,52 @@ def node(name: str):
     return json.loads(out)
 
 
+# 전환 가능 시점 신호 (poc/cdc/scripts/readiness.py 와 같은 기준). 전환 스크립트 자신의 접속은 뺀다
+READY_SQL = """
+with a as (
+  select pid, usename, wait_event_type, xact_start, left(query, 80) as query
+  from pg_stat_activity
+  where backend_type = 'client backend' and pid <> pg_backend_pid()
+    and coalesce(application_name, '') <> 'mig-switchover' and datname = current_database()
+)
+select json_build_object(
+  'longest_xact_ms', coalesce((extract(epoch from now() - min(xact_start)) * 1000)::bigint, 0),
+  'open_xacts', count(*) filter (where xact_start is not null),
+  'lock_waiters', count(*) filter (where wait_event_type = 'Lock'),
+  'xact_commit', (select xact_commit from pg_stat_database where datname = current_database()),
+  'top', coalesce((select json_agg(t) from (
+     select usename, (extract(epoch from now() - xact_start) * 1000)::bigint as xact_ms, wait_event_type, query
+     from a where xact_start is not null order by xact_start limit 3) t), '[]'::json))
+from a
+"""
+READY_MAX_XACT_MS = int(os.environ.get("READY_MAX_XACT_MS", "200"))
+_ready_prev = {}
+
+
+def readiness(primary, rep):
+    if primary not in ("pg-a", "pg-b"):
+        return None
+    rc, out = run(["docker", "exec", f"{PROJECT}-{primary}-1", "psql", "-U", "postgres", "-d", "app",
+                   "-XAtc", READY_SQL], timeout=3)
+    if rc != 0 or not out.strip():
+        return None
+    r = json.loads(out)
+    now, commits = time.time(), r.pop("xact_commit")
+    prev = _ready_prev.get(primary)
+    r["commits_per_sec"] = round((commits - prev[1]) / (now - prev[0]), 1) if prev and now > prev[0] else None
+    _ready_prev[primary] = (now, commits)
+    lag = (rep or {}).get("lag")
+    reasons = []
+    if r["longest_xact_ms"] > READY_MAX_XACT_MS:
+        reasons.append(f"트랜잭션이 {r['longest_xact_ms']}ms째 진행 중 (기준 {READY_MAX_XACT_MS}ms)")
+    if r["lock_waiters"]:
+        reasons.append(f"잠금 대기 {r['lock_waiters']}건")
+    if lag is None or not 0 <= lag <= 1048576:
+        reasons.append("복제 지연 " + ("없음 (복제 꺼짐)" if lag is None else f"{lag} bytes"))
+    r["ready"], r["reasons"] = not reasons, reasons
+    return r
+
+
 def pgb_target():
     rc, out = run(["docker", "exec", f"{PROJECT}-pgbouncer-1", "cat",
                    "/etc/pgbouncer/runtime/databases.ini"], timeout=3)
@@ -159,6 +205,14 @@ def switchovers():
     return res
 
 
+def physical_clone():
+    try:
+        p = RESULTS / "physical-clone.json"
+        return json.load(open(p)) | {"t": os.path.getmtime(p)}
+    except Exception:
+        return None
+
+
 def replication(nodes: dict, primary):
     """주 DB에서 나가는 복제 한 줄기를 단계로 요약한다."""
     if not primary or primary not in ("pg-a", "pg-b"):
@@ -203,13 +257,16 @@ def sampler():
         snap = {
             "t": t0, "containers": c, "primary": primary, "haproxy": haproxy(), "chat": chat_stats(),
             "loadgen": loadgen_last(), "replication": replication(nodes, primary), "switchovers": switchovers(),
+            "physical_clone": physical_clone(),
             "agents": agents.status(), "job": job_status(), "demo_port": DEMO_PORT,
         }
         rep = snap["replication"] or {}
+        snap["readiness"] = readiness(primary, rep)
         lg = snap["loadgen"] or {}
         point = {"t": round(t0, 1), "lag": rep.get("lag"), "ok": lg.get("ok"), "err": lg.get("err"),
                  "max_ms": lg.get("max_ms"), "chat": (snap["chat"] or {}).get("total"),
-                 "primary": primary}
+                 "primary": primary, "xact_ms": (snap["readiness"] or {}).get("longest_xact_ms"),
+                 "ready": (snap["readiness"] or {}).get("ready")}
         with lock:
             state.clear()
             state.update(snap)
@@ -227,7 +284,7 @@ def job_status():
 
 
 STEP = re.compile(r"▶ (.*)")
-SW_STEP = re.compile(r"\] (\d\. .*|완료: .*|ERROR: .*)")
+SW_STEP = re.compile(r"\] \s*(\d[a-d]?\. .*|대기: .*|준비됨.*|쓰기 중단 \d+ms|완료: .*|ERROR: .*|중단: .*|장애 주입 지점: .*)")
 
 
 def start_job(name: str, cmd: list, env: dict | None = None, after=None) -> bool:
@@ -277,7 +334,8 @@ def after_verify(out, rc):
     results["verify_t"] = time.time()
 
 
-FAULT_NAMES = {"kill-app": "앱 강제 종료", "tamper": "대기 DB 몰래 수정", "kill-target": "전환 도중 대기 DB 다운"}
+FAULT_NAMES = {"kill-app": "앱 강제 종료", "tamper": "대기 DB 몰래 수정", "kill-target": "전환 도중 대기 DB 다운",
+               "batch-switch": "배치 잠금 중 전환"}
 
 
 def after_fault(out, rc):
@@ -413,7 +471,10 @@ def metrics() -> dict:
                                 "phase": PHASE_KO.get(rep.get("phase"), rep.get("phase")),
                                 "lag_bytes": rep.get("lag"), "retained_wal_bytes": rep.get("retained")},
         "last_switchover": sw and {"direction": f"{sw['from']} -> {sw['to']}", "write_pause_ms": sw["write_pause_ms"],
+                                   "method": "빠른 전환 (검증은 RESUME 후)" if sw.get("impl") == "fast" else "기존 전환 (PAUSE 안 체크섬)",
                                    "checksum_ms": sw.get("steps_ms", {}).get("verify"),
+                                   "waited_for_ready_ms": sw.get("steps_ms", {}).get("wait_ready (PAUSE 전)"),
+                                   "verify_ok": sw.get("verify_ok"),
                                    "seconds_ago": round(now - sw["t"])},
         "switchover_count": len(s.get("switchovers") or []),
         "db_load": lg and {"tx_per_sec": lg.get("ok"), "p50_ms_60s": lg.get("p50_60s"), "p95_ms_60s": lg.get("p95_60s"),
@@ -422,6 +483,9 @@ def metrics() -> dict:
                            "errors_60s": sum((p["err"] or 0) for p in last60)},
         "chat_messages": s.get("chat"),
         "last_fault_test": fault_summary(now),
+        "switchover_readiness": (r := s.get("readiness")) and {
+            "ready_now": r["ready"], "not_ready_reasons": r["reasons"], "longest_xact_ms": r["longest_xact_ms"],
+            "lock_waiters": r["lock_waiters"], "commits_per_sec": r["commits_per_sec"]},
     }
 
 
@@ -434,6 +498,10 @@ def fault_summary(now):
 
 
 # ───────────────────────── 동작 ─────────────────────────
+
+def sw_env(body):
+    return {"SWITCHOVER": "classic" if body.get("switchover") == "classic" else "fast"}
+
 
 def action(name: str, body: dict):
     if name == "agents-start":
@@ -448,11 +516,12 @@ def action(name: str, body: dict):
             history.clear()
             events.clear()
         return start_job("환경 준비", ["bin/prepare"],
-                         {"SCALE": str(int(body.get("scale", 1))), "RATE": str(int(body.get("rate", 50)))})
+                         {"SCALE": str(int(body.get("scale", 1))), "RATE": str(int(body.get("rate", 50))),
+                          "COPY": "physical" if body.get("copy") == "physical" else "logical"})
     if name == "migrate":
-        return start_job("이전", ["bin/migrate"])
+        return start_job("이전", ["bin/migrate"], sw_env(body))
     if name == "rollback":
-        return start_job("되돌리기", ["bin/rollback"])
+        return start_job("되돌리기", ["bin/rollback"], sw_env(body))
     if name == "verify":
         def go():
             agents.stop()

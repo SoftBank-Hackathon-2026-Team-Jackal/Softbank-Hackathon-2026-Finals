@@ -3,12 +3,11 @@
 # 사용법: bin/fault kill-app [app-a|app-b]   트래픽 50:50에서 앱 하나를 SIGKILL로 강제 종료
 #         bin/fault tamper                    대기 DB의 채팅 메시지 하나를 몰래 고친 뒤 DB 전환 시도
 #         bin/fault kill-target               DB 전환 도중(정방향 구독을 끈 직후) 대기 DB를 강제 종료
+#         bin/fault batch-switch              배치가 상품 행을 잠근 상태에서 빠른 전환 시도, 끝나면 원래 DB로 되돌림
 # 마지막 줄에 FAULT_RESULT {...} 를 출력한다. 제어판이 이 줄을 읽어 결과 표에 보여 준다.
-set -uo pipefail
-cd "$(dirname "$0")/.."
-export COMPOSE_IGNORE_ORPHANS=true
+source "$(dirname "$0")/lib.sh"
+set +e   # 실패도 결과로 기록한다
 RESULTS=../cdc/results
-step() { printf '\n\033[1m[%s] ▶ %s\033[0m\n' "$(date +%T)" "$*"; }
 now_ms() { python3 -c 'import time; print(int(time.time()*1000))'; }
 hap() { printf '%s\n' "$1" | nc -w 1 127.0.0.1 "${HAPROXY_RUNTIME_PORT:-9999}"; }
 # show stat 에서 <프록시>,<서버> 행의 열 값
@@ -78,9 +77,9 @@ tamper() {
 
   step "장애: $to 의 채팅 메시지 #$id 를 몰래 수정 (복제를 거치지 않은 쓰기)"
   psql_on "$to" "update chat_messages set body = body || ' [변조]' where id = $id"
-  step "DB 전환 시도 $from → $to (체크섬 검증 강제)"
-  t0=$(now_ms)
-  out="$(VERIFY_IN_PAUSE=checksum ../cdc/bin/tool 05_switchover.sh "$from" "$to" 2>&1)"; rc=$?
+  # 빠른 전환은 검증을 RESUME 뒤로 미루므로, PAUSE 안에서 체크섬을 확인하는 기존 전환 스크립트로 시험한다
+  step "DB 전환 시도 $from → $to (기존 전환: PAUSE 안에서 체크섬 검증)"
+  out="$(VERIFY_IN_PAUSE=checksum $T 05_switchover.sh "$from" "$to" 2>&1)"; rc=$?
   echo "$out" | grep -v '^pg-' | sed 's/^/  /'
   pause="$(echo "$out" | sed -n 's/.*쓰기 중단 \([0-9]*\)ms).*/\1/p' | tail -1)"
 
@@ -99,8 +98,8 @@ kill_target() {
   local from to fwd rev out rc pause pass=false
   from="$(primary)"; to="$(other_of "$from")"; fwd="$(sub_of "$from")"; rev="$(sub_of "$to")"
   rm -f "$RESULTS/.fault-forward-disabled" "$RESULTS/.fault-forward-disabled.done"
-  step "DB 전환 시작 $from → $to (정방향 구독을 끈 직후에 장애)"
-  FAULT_AT=forward-disabled ../cdc/bin/tool 05_switchover.sh "$from" "$to" > "$RESULTS/.fault-out" 2>&1 &
+  step "DB 전환 시작 $from → $to ($SWITCHOVER, 정방향 구독을 끈 직후에 장애)"
+  FAULT_AT=forward-disabled VERIFY_AFTER=light $T "$SW" "$from" "$to" > "$RESULTS/.fault-out" 2>&1 &
   local sw=$!
   for _ in $(seq 600); do [[ -e "$RESULTS/.fault-forward-disabled" ]] && break; kill -0 $sw 2>/dev/null || break; sleep 0.05; done
   if [[ -e "$RESULTS/.fault-forward-disabled" ]]; then
@@ -123,18 +122,51 @@ kill_target() {
   bin/demo start "$to" 2>&1 | tail -1
   until psql_on "$to" "select 1" >/dev/null 2>&1; do sleep 0.3; done
   psql_on "$to" "ALTER SUBSCRIPTION $fwd ENABLE" >/dev/null
-  psql_on "$to" "select pg_drop_replication_slot(slot_name) from pg_replication_slots where slot_name = '$rev' and not active" >/dev/null
-  ../cdc/bin/tool 03_wait_sync.sh "$from" "$to" 120 2>&1 | tail -1
+  # 중단 처리가 $from 의 역방향 구독을 지웠는데 $to 가 죽어 있어서 남은 슬롯만 지운다 (구독이 살아 있으면 건드리지 않음)
+  [[ "$(psql_on "$from" "select count(*) from pg_subscription where subname = '$rev'")" == 0 ]] \
+    && psql_on "$to" "select pg_drop_replication_slot(slot_name) from pg_replication_slots where slot_name = '$rev' and not active" >/dev/null
+  $T 03_wait_sync.sh "$from" "$to" 120 2>&1 | tail -1
   local recover=$(( $(now_ms) - t0 ))
   local lag; lag="$(psql_on "$from" "select coalesce(max(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)), -1)::bigint from pg_replication_slots where slot_name = '$fwd'")"
   echo "복제 재개: 지연 ${lag} bytes, 복구 ${recover}ms"
   [[ $rc -ne 0 && "$now_primary" == "$from" && $served == true && $lag -ge 0 && $lag -le 1048576 ]] && pass=true
-  result "{\"fault\":\"kill-target\",\"pass\":$pass,\"from\":\"$from\",\"to\":\"$to\",\"refused\":$([[ $rc -ne 0 ]] && echo true || echo false),\"write_pause_ms\":${pause:-null},\"primary_after\":\"$now_primary\",\"recover_ms\":$recover,\"lag_after\":$lag}"
+  result "{\"fault\":\"kill-target\",\"switchover\":\"$SWITCHOVER\",\"pass\":$pass,\"from\":\"$from\",\"to\":\"$to\",\"refused\":$([[ $rc -ne 0 ]] && echo true || echo false),\"write_pause_ms\":${pause:-null},\"primary_after\":\"$now_primary\",\"recover_ms\":$recover,\"lag_after\":$lag}"
+}
+
+batch_switch() {
+  local from to sec="${BATCH_SEC:-5}" out rc pause wait_ms pass=false
+  from="$(primary)"; to="$(other_of "$from")"
+  [[ "$(psql_on "$to" "select count(*) from pg_subscription where subname = '$(sub_of "$from")' and subenabled")" == 1 ]] \
+    || { result "{\"fault\":\"batch-switch\",\"pass\":false,\"note\":\"$from → $to 복제가 없음\"}"; return 1; }
+  step "장애: 배치 작업이 $from 의 상품 행 전체를 ${sec}초 동안 잠금 (주문 트랜잭션이 잠금을 기다림)"
+  docker exec "cdc-poc-$from-1" psql -U postgres -d app -XAtq -c BEGIN \
+    -c "SELECT count(*) FROM (SELECT id FROM products ORDER BY id FOR UPDATE) t" -c "SELECT pg_sleep($sec)" -c COMMIT >/dev/null &
+  local bp=$!
+  for _ in $(seq 100); do
+    [[ "$(psql_on "$from" "select count(*) from pg_stat_activity where query like 'SELECT pg_sleep%'")" == 1 ]] && break; sleep 0.1
+  done
+  step "DB 전환 시도 $from → $to (빠른 전환, 전환 가능 시점까지 대기)"
+  out="$(VERIFY_AFTER=light $T 05_switchover_fast.py "$from" "$to" 2>&1)"; rc=$?
+  echo "$out" | grep -E '^\[' | sed 's/^/  /'
+  wait $bp
+  read -r pause wait_ms < <(echo "$out" | python3 -c '
+import json, sys
+t = sys.stdin.read(); i = t.find("\n{")
+d = json.loads(t[i + 1:]) if i >= 0 else {}
+print(d.get("write_pause_ms", "null"), d.get("steps_ms", {}).get("wait_ready (PAUSE 전)", "null"))' 2>/dev/null)
+  echo "전환 가능 시점까지 ${wait_ms}ms 대기, 쓰기 중단 ${pause}ms"
+  if (( rc == 0 )); then
+    step "원래대로: $to → $from 되돌리기"
+    VERIFY_AFTER=light $T 06_rollback.sh "$from" 2>&1 | grep -E '완료|ERROR' | sed 's/^/  /'
+  fi
+  [[ $rc -eq 0 && "$pause" != null && $pause -lt 1000 && "$wait_ms" != null && $wait_ms -ge 500 ]] && pass=true
+  result "{\"fault\":\"batch-switch\",\"pass\":$pass,\"from\":\"$from\",\"to\":\"$to\",\"batch_sec\":$sec,\"wait_ready_ms\":${wait_ms:-null},\"write_pause_ms\":${pause:-null},\"primary_after\":\"$(primary)\"}"
 }
 
 case "${1:-}" in
   kill-app) kill_app "${2:-app-a}" ;;
   tamper) tamper ;;
   kill-target) kill_target ;;
-  *) sed -n '2,6p' "$0"; exit 2 ;;
+  batch-switch) batch_switch ;;
+  *) sed -n '2,7p' "$0"; exit 2 ;;
 esac

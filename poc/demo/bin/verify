@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 # 부하 생성기를 멈추고 유실과 데이터 일치를 확인한다. 에이전트 집계는 에이전트를 Ctrl-C로 끄면 나온다.
-set -uo pipefail
-cd "$(dirname "$0")/.."
-# PoC의 bin/tool은 poc/cdc Compose만 보므로 데모 컨테이너를 orphan으로 경고한다
-export COMPOSE_IGNORE_ORPHANS=true
-step() { printf '\n\033[1m[%s] ▶ %s\033[0m\n' "$(date +%T)" "$*"; }
+source "$(dirname "$0")/lib.sh"
+set +e   # 검증은 하나가 실패해도 끝까지 확인한다
 primary="$(bin/demo exec -T pgbouncer sed -n 's/^app = host=\([^ ]*\).*/\1/p' /etc/pgbouncer/runtime/databases.ini)"
 other=pg-a; [[ "$primary" == pg-a ]] && other=pg-b
 
@@ -12,8 +9,8 @@ step "부하 생성기 중지"
 bin/demo --profile load stop loadgen 2>&1 | tail -1
 cat ../cdc/results/loadgen-summary.json; echo
 step "유실 확인 (주 DB $primary)"
-../cdc/bin/tool 07_check_lost.sh "$primary"
+$T 07_check_lost.sh "$primary"
 step "복제 지연 해소 대기 후 데이터 비교 ($primary ↔ $other)"
-../cdc/bin/tool 03_wait_sync.sh "$primary" "$other" 60 2>&1 | tail -1
-../cdc/bin/tool 04_compare.sh "$primary" "$other"
+$T 03_wait_sync.sh "$primary" "$other" 60 2>&1 | tail -1
+$T 04_compare.sh "$primary" "$other"
 step "완료"
