@@ -5,5 +5,5 @@ cd "$(dirname "$0")/.."
 script="${1:?스크립트 이름}"; shift
 # 스크립트 동작을 바꾸는 환경 변수는 컨테이너 안으로 넘긴다
 exec docker compose --profile tools run --rm -T \
-  -e POLL_SEC -e VERIFY_IN_PAUSE -e LAG_OK_BYTES -e SKIP_RI_FIX -e MARKER_TIMEOUT_MS -e PAUSE_TIMEOUT_SEC \
+  -e POLL_SEC -e VERIFY_IN_PAUSE -e LAG_OK_BYTES -e SKIP_RI_FIX -e MARKER_TIMEOUT_MS -e PAUSE_TIMEOUT_SEC -e FAULT_AT \
   toolbox "scripts/$script" "$@"

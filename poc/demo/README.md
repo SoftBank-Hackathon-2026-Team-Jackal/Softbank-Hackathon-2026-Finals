@@ -34,6 +34,30 @@ python3 poc/demo/panel/server.py    # http://localhost:8091
 | `bin/migrate` | 트래픽 50:50 → 0:100 → app-a 종료 → DB pg-a → pg-b 전환 |
 | `bin/rollback` | DB pg-b → pg-a 전환 → app-a 시작 → 트래픽 50:50 → 100:0 |
 | `bin/verify` | 부하 중지 → 유실 확인 → 데이터 비교 |
+| `bin/fault <장애>` | 장애 주입 (`kill-app`, `tamper`, `kill-target`). 마지막 줄에 `FAULT_RESULT {...}` 출력 |
+
+## 장애 주입
+
+제어판의 "장애 주입" 카드나 `bin/fault`로 실행합니다. 장애마다 기대 결과와 실제 측정값을 비교해 판정하고, 결과는 `/api/metrics`의 `last_fault_test`로 에이전트에게도 전달됩니다. 메시지 유실 여부는 장애 뒤에 검증으로 확인합니다.
+
+| 장애 | 주입 방법 | 작동하는 장치 | 기대 결과 |
+|---|---|---|---|
+| `kill-app` 앱 강제 종료 | 트래픽 50:50에서 app-a를 SIGKILL, 10초 뒤 원래 상태로 | HAProxy 헬스 체크, `retry-on`, SSE 재접속, `client_msg_id` | 사용자 5xx 0, 메시지 유실 0 |
+| `tamper` 대기 DB 몰래 수정 | 대기 DB의 채팅 메시지 하나를 직접 수정한 뒤 DB 전환 시도 (끝나면 원래대로 되돌림) | PAUSE 안 체크섬 검증 | 전환 거부, 주 DB 유지 |
+| `kill-target` 전환 도중 대기 DB 다운 | `FAULT_AT=forward-disabled`로 정방향 구독을 끈 직후 대상 DB를 SIGKILL | `05_switchover.sh`의 중단 처리 | 원래 DB로 RESUME, 대상 DB가 돌아오면 정방향 구독을 다시 켜서 복제 재개 |
+
+`05_switchover.sh`는 `FAULT_AT=<paused|forward-disabled>`이면 그 지점에서 결과 폴더에 `.fault-<지점>` 파일을 만들고, 호스트가 장애를 일으킨 뒤 `.done` 파일을 만들 때까지 최대 5초 기다립니다.
+
+이 시험을 위해 전환 절차를 고쳤습니다. 예전에는 4단계에서 정방향 구독을 **삭제**해서, 그 뒤 RESUME 전에 실패하면 대상 DB가 복제를 잃었습니다. 지금은 4단계에서 구독을 **끄기만** 하고 RESUME 뒤에 삭제합니다. 중간에 실패하면 구독을 다시 켜서 그대로 이어지고, 대상 DB에 접속할 수 없으면 남은 역방향 슬롯 정리 방법을 로그로 안내합니다.
+
+결과 (2026-11-04, 주 DB pg-b, 부하 50 tx/s, 에이전트 실행 중):
+
+| 장애 | 측정값 |
+|---|---|
+| 앱 강제 종료 | 감지까지 3,953ms, HAProxy 재시도 2건, 사용자 5xx 0건 |
+| 대기 DB 몰래 수정 | 전환 거부, 쓰기 중단 710ms, 주 DB pg-b 유지 |
+| 전환 도중 대기 DB 다운 | 전환 거부, 쓰기 중단 869ms, 복제 재개까지 1,483ms |
+| 이후 검증 | 에이전트 메시지 6건 유실 0, 부하 92,344건 에러 0, 커밋된 주문 55,660건 유실 0, 체크섬 일치 |
 
 ## 단계별 실행
 

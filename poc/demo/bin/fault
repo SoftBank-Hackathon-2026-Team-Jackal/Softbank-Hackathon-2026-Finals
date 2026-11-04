@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# 장애를 일부러 일으키고, 서비스가 버티는지 또는 플랫폼이 위험한 전환을 거부하는지 확인한다.
+# 사용법: bin/fault kill-app [app-a|app-b]   트래픽 50:50에서 앱 하나를 SIGKILL로 강제 종료
+#         bin/fault tamper                    대기 DB의 채팅 메시지 하나를 몰래 고친 뒤 DB 전환 시도
+#         bin/fault kill-target               DB 전환 도중(정방향 구독을 끈 직후) 대기 DB를 강제 종료
+# 마지막 줄에 FAULT_RESULT {...} 를 출력한다. 제어판이 이 줄을 읽어 결과 표에 보여 준다.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+export COMPOSE_IGNORE_ORPHANS=true
+RESULTS=../cdc/results
+step() { printf '\n\033[1m[%s] ▶ %s\033[0m\n' "$(date +%T)" "$*"; }
+now_ms() { python3 -c 'import time; print(int(time.time()*1000))'; }
+hap() { printf '%s\n' "$1" | nc -w 1 127.0.0.1 "${HAPROXY_RUNTIME_PORT:-9999}"; }
+# show stat 에서 <프록시>,<서버> 행의 열 값
+hstat() { hap "show stat" | awk -F, -v px="$1" -v sv="$2" -v col="$3" '
+  NR==1 { for (i=1;i<=NF;i++) if ($i==col || $i=="# "col) c=i; next }
+  $1==px && $2==sv { print ($c==""?0:$c) }'; }
+app_status() { hstat app "$1" status; }
+wait_app() { # <앱> <UP|DOWN> <최대 초>
+  local i; for (( i=0; i < $3*10; i++ )); do [[ "$(app_status "$1")" == "$2"* ]] && return 0; sleep 0.1; done; return 1; }
+running() { [[ "$(docker inspect -f '{{.State.Running}}' "cdc-poc-$1-1" 2>/dev/null)" == true ]]; }
+psql_on() { bin/demo exec -T "$1" psql -U postgres -d app -XAtq -v ON_ERROR_STOP=1 -c "$2"; }
+primary() { bin/demo exec -T pgbouncer sed -n 's/^app = host=\([^ ]*\).*/\1/p' /etc/pgbouncer/runtime/databases.ini; }
+other_of() { [[ "$1" == pg-a ]] && echo pg-b || echo pg-a; }
+sub_of() { echo "mig_from_${1//-/_}"; }
+weights() { hap "show servers state app" | awk '$4=="app-a"{a=$8} $4=="app-b"{b=$8} END{print a, b}'; }
+result() { printf 'FAULT_RESULT %s\n' "$1"; }
+# PgBouncer가 요청을 받는지 (PAUSE에 갇혀 있지 않은지)
+# <노드> 컨테이너 안의 psql로 PgBouncer에 접속한다. PAUSE 상태면 응답이 없으므로 3초 제한
+pgb_ok() { perl -e 'alarm shift; exec @ARGV' 3 docker exec "cdc-poc-$1-1" psql "postgresql://app:app@pgbouncer:6432/app" -XAtqc "select 1" >/dev/null 2>&1; }
+
+kill_app() {
+  local target="${1:-app-a}" other
+  other=app-b; [[ "$target" == app-b ]] && other=app-a
+  read -r wa wb < <(weights)
+  local was_a=0 was_b=0; running app-a && was_a=1; running app-b && was_b=1
+
+  step "준비: 두 앱을 띄우고 트래픽 50:50"
+  for a in app-a app-b; do running "$a" || bin/demo start "$a" 2>&1 | tail -1; done
+  wait_app app-a UP 30 && wait_app app-b UP 30 || { result '{"fault":"kill-app","pass":false,"note":"앱이 UP이 되지 않음"}'; return 1; }
+  bin/weight 50 50
+  sleep "${WARM_SEC:-5}"
+
+  local r0 d0 e0
+  r0=$(( $(hstat app BACKEND wretr) + $(hstat app BACKEND wredis) ))
+  e0=$(hstat web FRONTEND hrsp_5xx)
+  step "장애: $target 강제 종료 (SIGKILL, 정상 종료 절차 없음)"
+  local t0; t0=$(now_ms)
+  docker kill "cdc-poc-$target-1" >/dev/null
+  wait_app "$target" DOWN 10
+  local detect=$(( $(now_ms) - t0 ))
+  echo "HAProxy가 $target 장애를 감지하고 내림: ${detect}ms"
+  step "${HOLD_SEC:-10}초 동안 $other 혼자 처리"
+  sleep "${HOLD_SEC:-10}"
+  local retries client5xx
+  retries=$(( $(hstat app BACKEND wretr) + $(hstat app BACKEND wredis) - r0 ))
+  client5xx=$(( $(hstat web FRONTEND hrsp_5xx) - e0 ))
+  echo "HAProxy 재시도·재분배 ${retries}건, 사용자가 받은 5xx ${client5xx}건"
+
+  step "복구: $target 다시 시작, 원래 가중치 ${wa}:${wb}"
+  bin/demo start "$target" 2>&1 | tail -1
+  wait_app "$target" UP 30
+  bin/weight "$wa" "$wb"
+  (( was_a )) || bin/demo stop app-a 2>&1 | tail -1
+  (( was_b )) || bin/demo stop app-b 2>&1 | tail -1
+  local pass=false; (( client5xx == 0 )) && pass=true
+  result "{\"fault\":\"kill-app\",\"target\":\"$target\",\"pass\":$pass,\"detect_ms\":$detect,\"retries\":$retries,\"client_5xx\":$client5xx}"
+}
+
+tamper() {
+  local from to id t0 out rc pause pass=false
+  from="$(primary)"; to="$(other_of "$from")"
+  step "준비: 대기 DB $to 확인"
+  [[ "$(psql_on "$to" "select count(*) from pg_subscription where subname = '$(sub_of "$from")' and subenabled")" == 1 ]] \
+    || { result "{\"fault\":\"tamper\",\"pass\":false,\"note\":\"$from → $to 복제가 없음\"}"; return 1; }
+  id="$(psql_on "$to" "select max(id) from chat_messages")"
+  [[ -n "$id" ]] || { result '{"fault":"tamper","pass":false,"note":"채팅 메시지가 없음"}'; return 1; }
+
+  step "장애: $to 의 채팅 메시지 #$id 를 몰래 수정 (복제를 거치지 않은 쓰기)"
+  psql_on "$to" "update chat_messages set body = body || ' [변조]' where id = $id"
+  step "DB 전환 시도 $from → $to (체크섬 검증 강제)"
+  t0=$(now_ms)
+  out="$(VERIFY_IN_PAUSE=checksum ../cdc/bin/tool 05_switchover.sh "$from" "$to" 2>&1)"; rc=$?
+  echo "$out" | grep -v '^pg-' | sed 's/^/  /'
+  pause="$(echo "$out" | sed -n 's/.*쓰기 중단 \([0-9]*\)ms).*/\1/p' | tail -1)"
+
+  step "확인: 주 DB, PgBouncer 응답"
+  local now_primary; now_primary="$(primary)"
+  local served=false; pgb_ok "$from" && served=true
+  echo "주 DB $now_primary, PgBouncer 응답 $served"
+
+  step "정리: 수정한 메시지 원래대로"
+  psql_on "$to" "update chat_messages set body = left(body, length(body) - length(' [변조]')) where id = $id and body like '% [변조]'"
+  [[ $rc -ne 0 && "$out" == *"체크섬 불일치"* && "$now_primary" == "$from" && $served == true ]] && pass=true
+  result "{\"fault\":\"tamper\",\"pass\":$pass,\"from\":\"$from\",\"to\":\"$to\",\"message_id\":$id,\"refused\":$([[ $rc -ne 0 ]] && echo true || echo false),\"write_pause_ms\":${pause:-null},\"primary_after\":\"$now_primary\"}"
+}
+
+kill_target() {
+  local from to fwd rev out rc pause pass=false
+  from="$(primary)"; to="$(other_of "$from")"; fwd="$(sub_of "$from")"; rev="$(sub_of "$to")"
+  rm -f "$RESULTS/.fault-forward-disabled" "$RESULTS/.fault-forward-disabled.done"
+  step "DB 전환 시작 $from → $to (정방향 구독을 끈 직후에 장애)"
+  FAULT_AT=forward-disabled ../cdc/bin/tool 05_switchover.sh "$from" "$to" > "$RESULTS/.fault-out" 2>&1 &
+  local sw=$!
+  for _ in $(seq 600); do [[ -e "$RESULTS/.fault-forward-disabled" ]] && break; kill -0 $sw 2>/dev/null || break; sleep 0.05; done
+  if [[ -e "$RESULTS/.fault-forward-disabled" ]]; then
+    step "장애: 전환 도중 $to 강제 종료 (쓰기는 PAUSE 상태)"
+    docker kill "cdc-poc-$to-1" >/dev/null
+    touch "$RESULTS/.fault-forward-disabled.done"
+  fi
+  wait $sw; rc=$?
+  out="$(cat "$RESULTS/.fault-out")"; rm -f "$RESULTS/.fault-out"
+  echo "$out" | grep -v '^pg-' | sed 's/^/  /'
+  pause="$(echo "$out" | sed -n 's/.*쓰기 중단 \([0-9]*\)ms).*/\1/p' | tail -1)"
+
+  step "확인: 주 DB, PgBouncer 응답"
+  local now_primary served=false; now_primary="$(primary)"
+  pgb_ok "$from" && served=true
+  echo "주 DB $now_primary, PgBouncer 응답 $served"
+
+  step "복구: $to 다시 시작 → 정방향 구독 켜기 → 남은 슬롯 정리 → 복제 따라잡기"
+  local t0; t0=$(now_ms)
+  bin/demo start "$to" 2>&1 | tail -1
+  until psql_on "$to" "select 1" >/dev/null 2>&1; do sleep 0.3; done
+  psql_on "$to" "ALTER SUBSCRIPTION $fwd ENABLE" >/dev/null
+  psql_on "$to" "select pg_drop_replication_slot(slot_name) from pg_replication_slots where slot_name = '$rev' and not active" >/dev/null
+  ../cdc/bin/tool 03_wait_sync.sh "$from" "$to" 120 2>&1 | tail -1
+  local recover=$(( $(now_ms) - t0 ))
+  local lag; lag="$(psql_on "$from" "select coalesce(max(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)), -1)::bigint from pg_replication_slots where slot_name = '$fwd'")"
+  echo "복제 재개: 지연 ${lag} bytes, 복구 ${recover}ms"
+  [[ $rc -ne 0 && "$now_primary" == "$from" && $served == true && $lag -ge 0 && $lag -le 1048576 ]] && pass=true
+  result "{\"fault\":\"kill-target\",\"pass\":$pass,\"from\":\"$from\",\"to\":\"$to\",\"refused\":$([[ $rc -ne 0 ]] && echo true || echo false),\"write_pause_ms\":${pause:-null},\"primary_after\":\"$now_primary\",\"recover_ms\":$recover,\"lag_after\":$lag}"
+}
+
+case "${1:-}" in
+  kill-app) kill_app "${2:-app-a}" ;;
+  tamper) tamper ;;
+  kill-target) kill_target ;;
+  *) sed -n '2,6p' "$0"; exit 2 ;;
+esac

@@ -38,7 +38,7 @@ state: dict = {}
 history = collections.deque(maxlen=HISTORY_SEC)  # 1초마다 한 점
 log_lines: list = []  # (seq, t, text)
 events: list = []  # 단계 표시: {t, job, label}
-results = {"agents": None, "loadgen": None, "lost": None, "compare": None, "verify_t": None}
+results = {"agents": None, "loadgen": None, "lost": None, "compare": None, "verify_t": None, "faults": []}
 
 
 def add_log(text: str) -> None:
@@ -277,6 +277,21 @@ def after_verify(out, rc):
     results["verify_t"] = time.time()
 
 
+FAULT_NAMES = {"kill-app": "앱 강제 종료", "tamper": "대기 DB 몰래 수정", "kill-target": "전환 도중 대기 DB 다운"}
+
+
+def after_fault(out, rc):
+    line = next((l for l in reversed(out) if l.startswith("FAULT_RESULT ")), None)
+    try:
+        r = json.loads(line.removeprefix("FAULT_RESULT ")) if line else None
+    except ValueError:
+        r = None
+    r = r or {"pass": False, "note": f"결과를 읽지 못함 (exit {rc})"}
+    r["t"] = time.time()
+    with lock:
+        results["faults"] = (results["faults"] + [r])[-10:]
+
+
 # ───────────────────────── 에이전트 ─────────────────────────
 
 class Agents:
@@ -353,6 +368,10 @@ PHASE_KO = {"none": "준비 전", "schema": "스키마만 복사됨", "copying":
 def stage(s: dict) -> str:
     """지금 이전이 어디까지 왔는지 한 문장으로 설명한다. 에이전트가 정상 과정을 사고로 오해하지 않게 한다."""
     j = s.get("job") or {}
+    if j.get("running") and j.get("name", "").startswith("장애"):
+        last = next((e["label"] for e in reversed(events) if e["job"] == j["name"] and e["kind"] != "job"), "시작")
+        return (f"{j['name']} 시험 중 (운영자가 일부러 일으킨 장애이며, 플랫폼이 버티는지 확인하는 단계). "
+                f"현재 단계: {last}")
     if j.get("running") and j.get("name") in ("이전", "되돌리기", "환경 준비"):
         last = next((e["label"] for e in reversed(events) if e["job"] == j["name"] and e["kind"] != "job"), "시작")
         return f"{j['name']} 작업 진행 중. 현재 단계: {last}"
@@ -402,7 +421,16 @@ def metrics() -> dict:
                            "max_ms_60s": round(max((p["max_ms"] or 0) for p in last60), 1) if last60 else None,
                            "errors_60s": sum((p["err"] or 0) for p in last60)},
         "chat_messages": s.get("chat"),
+        "last_fault_test": fault_summary(now),
     }
+
+
+def fault_summary(now):
+    f = (results.get("faults") or [None])[-1]
+    if not f:
+        return None
+    keep = {k: v for k, v in f.items() if k not in ("t", "fault")}
+    return {"name": FAULT_NAMES.get(f.get("fault"), f.get("fault")), "seconds_ago": round(now - f["t"])} | keep
 
 
 # ───────────────────────── 동작 ─────────────────────────
@@ -415,7 +443,7 @@ def action(name: str, body: dict):
         return True
     if name == "prepare":
         agents.stop()
-        results.update(agents=None, loadgen=None, lost=None, compare=None, verify_t=None)
+        results.update(agents=None, loadgen=None, lost=None, compare=None, verify_t=None, faults=[])
         with lock:
             history.clear()
             events.clear()
@@ -431,6 +459,11 @@ def action(name: str, body: dict):
             start_job("검증", ["bin/verify"], after=after_verify)
         threading.Thread(target=go, daemon=True).start()
         return True
+    if name.startswith("fault-"):
+        kind = name.removeprefix("fault-")
+        if kind not in FAULT_NAMES:
+            return None
+        return start_job(f"장애: {FAULT_NAMES[kind]}", ["bin/fault", kind], after=after_fault)
     if name == "load-start":
         return start_job("부하 시작", ["bin/demo", "--profile", "load", "up", "-d", "--build", "--no-deps", "loadgen"],
                          {"RATE": str(int(body.get("rate", 50)))})

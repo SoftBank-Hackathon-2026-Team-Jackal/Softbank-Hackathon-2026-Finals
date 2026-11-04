@@ -4,12 +4,16 @@
 #   1. PgBouncer PAUSE           새 트랜잭션을 대기시킴 (연결은 유지되므로 앱 에러 없음)
 #   2. marker 행 도착 확인         커밋 순서대로 전달되므로, marker가 왔다면 그 앞의 변경도 모두 도착함
 #   3. 체크섬 비교                 불일치하면 RESUME 하고 중단 (원래 DB 그대로 계속 서비스)
-#   4. 정방향 구독 삭제            역방향과 동시에 살아 있으면 변경이 오가는 루프가 생길 수 있음
+#   4. 정방향 구독 끄기            역방향과 동시에 살아 있으면 변경이 오가는 루프가 생길 수 있음
+#                                  삭제하지 않고 끄기만 하므로, 이후 단계에서 실패해도 다시 켜면 복제가 그대로 이어진다
 #   5. 시퀀스 동기화
 #   6. 역방향 복제 켜기            <새> → <현재>, copy_data = false (롤백 보험)
 #      구독은 PAUSE 전에 enabled = false 로 미리 만든다(원격 슬롯 생성이 느리기 때문).
 #      전환 전까지 <새>에 들어오는 변경은 모두 복제로 받은 것이라 origin = none 이 걸러 내므로 안전하다.
 #   7. PgBouncer 대상 변경 → RECONNECT → RESUME
+#   8. 정방향 구독 삭제 (쓰기 중단 밖)
+# 장애 주입: FAULT_AT=<지점> 이면 그 지점에서 결과 폴더에 .fault-<지점> 파일을 만들고,
+#   호스트가 장애를 일으킨 뒤 .fault-<지점>.done 을 만들 때까지 최대 5초 기다린다 (poc/demo/bin/fault)
 source "$(dirname "$0")/lib.sh"
 from="${1:?현재 주 DB}" to="${2:?새 주 DB}"
 fwd="$(sub_name "$from")" rev="$(sub_name "$to")"
@@ -28,19 +32,39 @@ fi
 lag="$(slot_lag "$from" "$fwd")"
 (( lag >= 0 && lag <= LAG_OK_BYTES )) || die "지연량이 큽니다 (${lag} bytes). 03_wait_sync.sh 를 먼저 실행하세요"
 
+fault_point() {
+  [[ "${FAULT_AT:-}" == "$1" ]] || return 0
+  log "장애 주입 지점: $1"
+  touch "$RESULTS_DIR/.fault-$1"
+  for _ in $(seq 100); do [[ -e "$RESULTS_DIR/.fault-$1.done" ]] && break; sleep 0.05; done
+  rm -f "$RESULTS_DIR/.fault-$1" "$RESULTS_DIR/.fault-$1.done"
+}
+
 declare -A ts
-prepared=0 paused=0 fwd_dropped=0 switched=0
+prepared=0 paused=0 fwd_disabled=0 switched=0
 on_exit() {
   local rc=$?
-  if (( paused && ! switched )); then
-    log "중단: PgBouncer RESUME (대상은 계속 $from)"
+  (( switched )) && exit $rc
+  if (( paused )); then
     pgb "RESUME app;" >/dev/null || true
+    log "중단: PgBouncer RESUME, 대상은 계속 $from (쓰기 중단 $(( $(now_ms) - ts[start] ))ms)"
   fi
-  if (( prepared && ! fwd_dropped )); then
+  if (( prepared )); then
     log "중단: 미리 만든 역방향 구독 $rev 삭제"
-    q "$from" "DROP SUBSCRIPTION IF EXISTS $rev" >/dev/null || true
+    if ! q "$from" "DROP SUBSCRIPTION IF EXISTS $rev" >/dev/null 2>&1; then
+      # $to 가 죽어서 원격 슬롯을 지울 수 없으면 슬롯 연결을 끊고 구독만 지운다. $to 의 슬롯은 나중에 지워야 한다
+      q "$from" "ALTER SUBSCRIPTION $rev DISABLE; ALTER SUBSCRIPTION $rev SET (slot_name = NONE)" >/dev/null 2>&1 || true
+      q "$from" "DROP SUBSCRIPTION IF EXISTS $rev" >/dev/null 2>&1 || true
+      log "주의: $to 에 남은 복제 슬롯 $rev 는 $to 가 돌아오면 지워야 합니다"
+    fi
   fi
-  (( fwd_dropped && ! switched )) && log "주의: 정방향 구독은 이미 삭제되었습니다. $to 는 더 이상 복제를 받지 않습니다"
+  if (( fwd_disabled )); then
+    if q "$to" "ALTER SUBSCRIPTION $fwd ENABLE" >/dev/null 2>&1; then
+      log "중단: 정방향 구독 $fwd 다시 켬 ($from → $to 복제 계속)"
+    else
+      log "주의: $to 에 접속할 수 없어 정방향 구독을 켜지 못했습니다. $to 가 돌아오면 ALTER SUBSCRIPTION $fwd ENABLE"
+    fi
+  fi
   exit $rc
 }
 trap on_exit EXIT
@@ -68,6 +92,7 @@ if ! timeout "$PAUSE_TIMEOUT_SEC" psql "$PGB_ADMIN_URL" -XAtq -c "PAUSE app;" >/
   die "PAUSE가 ${PAUSE_TIMEOUT_SEC}초 안에 끝나지 않았습니다 (긴 트랜잭션). 전환을 중단합니다"
 fi
 ts[paused]=$(now_ms)
+fault_point paused
 
 log "2. marker 확인"
 marker="$(q "$from" "INSERT INTO mig.marker DEFAULT VALUES RETURNING id")"
@@ -86,9 +111,10 @@ else
 fi
 ts[verified]=$(now_ms)
 
-log "4. 정방향 구독 삭제 ($fwd)"
-q "$to" "DROP SUBSCRIPTION $fwd" >/dev/null
-fwd_dropped=1
+log "4. 정방향 구독 끄기 ($fwd)"
+q "$to" "ALTER SUBSCRIPTION $fwd DISABLE" >/dev/null
+fwd_disabled=1
+fault_point forward-disabled
 
 log "5. 시퀀스 동기화"
 q "$from" "select format('select setval(%L, %s, true);', quote_ident(schemaname) || '.' || quote_ident(sequencename), last_value)
@@ -107,6 +133,9 @@ pgb "RESUME app;" >/dev/null
 switched=1
 ts[resumed]=$(now_ms)
 
+log "8. 정방향 구독 삭제 ($fwd, 쓰기 중단 밖)"
+q "$to" "DROP SUBSCRIPTION $fwd" >/dev/null || log "주의: 정방향 구독 $fwd 삭제 실패. 직접 지워야 되돌리기를 할 수 있습니다"
+
 # 쓰기 중단 = PAUSE 명령을 보낸 순간부터 RESUME까지 (PAUSE 대기 중에도 새 요청은 막힌다)
 pause_ms=$(( ts[resumed] - ts[start] ))
 result="$RESULTS_DIR/switchover-$(date +%Y%m%dT%H%M%S)-$from-to-$to.json"
@@ -121,7 +150,7 @@ cat > "$result" <<JSON
     "pause_wait_inflight": $(( ts[paused] - ts[start] )),
     "marker_wait": $(( ts[marker] - ts[paused] )),
     "verify": $(( ts[verified] - ts[marker] )),
-    "drop_forward_seq_sync_enable_reverse": $(( ts[reverse] - ts[verified] )),
+    "disable_forward_seq_sync_enable_reverse": $(( ts[reverse] - ts[verified] )),
     "retarget_resume": $(( ts[resumed] - ts[reverse] ))
   }
 }
