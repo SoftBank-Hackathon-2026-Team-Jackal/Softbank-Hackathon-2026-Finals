@@ -1,0 +1,45 @@
+# 이전 리허설 환경: CDC PoC(pg-a, pg-b, PgBouncer) 위에 데모 앱 2개(env-a, env-b)와 HAProxy를 얹는다.
+# 단독으로 쓰지 않고 ../cdc/docker-compose.yml 뒤에 겹쳐서 쓴다 (bin/demo가 처리한다).
+# 주의: 여러 -f 파일을 겹치면 상대 경로는 첫 파일(poc/cdc) 기준으로 해석된다.
+
+services:
+  pg-a:
+    environment:
+      NODE_NAME: pg-a   # 메시지의 db_node 표시용. db/node.sql이 ALTER DATABASE로 남긴다
+    volumes:
+      - ../demo/db/node.sql:/docker-entrypoint-initdb.d/00-node.sql:ro
+
+  pg-b:
+    environment:
+      NODE_NAME: pg-b
+    volumes:
+      - ../demo/db/node.sql:/docker-entrypoint-initdb.d/00-node.sql:ro
+
+  app-a: &app
+    # 데모 앱 저장소를 옆에 클론해서 빌드한다 (GHCR 이미지는 비공개)
+    build: ${DEMO_APP_SRC:?데모 앱 저장소 경로 (bin/demo가 설정)}
+    image: demo-app:local
+    depends_on:
+      pgbouncer: { condition: service_started }
+    restart: unless-stopped
+    # DRAIN_DELAY(3초) + 진행 중인 요청 정리 시간을 보장한다
+    stop_grace_period: 20s
+    environment:
+      ENV_NAME: env-a
+      DATABASE_URL: postgresql://app:app@pgbouncer:6432/app
+
+  app-b:
+    <<: *app
+    environment:
+      ENV_NAME: env-b
+      DATABASE_URL: postgresql://app:app@pgbouncer:6432/app
+
+  haproxy:
+    image: haproxy:3.0
+    depends_on: [app-a, app-b]
+    volumes:
+      - ../demo/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "${DEMO_PORT:-8090}:8080"
+      - "${DEMO_STATS_PORT:-8404}:8404"
+      - "127.0.0.1:${HAPROXY_RUNTIME_PORT:-9999}:9999"

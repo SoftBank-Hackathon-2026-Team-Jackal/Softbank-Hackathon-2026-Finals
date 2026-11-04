@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# 리허설 초기 상태를 만든다: 앱은 env-a(100:0), DB는 pg-a, pg-a → pg-b 복제가 streaming, 부하 생성기 동작 중.
+# 에이전트는 따로 띄운다. 이 상태에서 bin/migrate를 실행하면 앱과 DB를 한 번에 옮긴다.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# PoC의 bin/tool은 poc/cdc Compose만 보므로 데모 컨테이너를 orphan으로 경고한다
+export COMPOSE_IGNORE_ORPHANS=true
+T=../cdc/bin/tool
+step() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
+
+step "환경 초기화"
+bin/demo --profile load --profile tools down -v --remove-orphans >/dev/null 2>&1 || true
+rm -f ../cdc/results/*.json ../cdc/results/*.jsonl ../cdc/results/*.txt
+bin/demo up -d --build --wait >/dev/null
+# 앱이 시작하면서 chat_messages를 만든 뒤에 스키마를 복사해야 pg-b에도 생긴다
+until bin/demo exec -T pg-a psql -U postgres -d app -Atc "select to_regclass('chat_messages')" | grep -q chat; do sleep 1; done
+
+step "기존 데이터 생성"
+$T seed.sh pg-a "${SCALE:-1}"
+
+step "부하 생성 시작 (초당 ${RATE:-50}건)"
+RATE="${RATE:-50}" bin/demo --profile load up -d --build --no-deps loadgen >/dev/null
+
+step "스키마 덤프 (pg_dump --schema-only) pg-a → pg-b"
+$T 01_copy_schema.sh pg-a pg-b
+step "초기 복사 + 변경 따라잡기 (논리 복제)"
+$T 02_start_replication.sh pg-a pg-b
+$T 03_wait_sync.sh pg-a pg-b 600 2>&1 | awk 'NR % 5 == 1 || /streaming/'
+bin/weight 100 0
+step "준비 완료"
+printf 'http://localhost:%s\n' "${DEMO_PORT:-8090}"

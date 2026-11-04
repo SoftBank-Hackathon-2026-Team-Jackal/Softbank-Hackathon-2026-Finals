@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# CDC PoC Compose와 데모 Compose를 겹쳐서 docker compose를 실행한다. 예: bin/demo up -d --build --wait
+# 프로젝트 이름은 PoC와 같은 cdc-poc라서, PoC의 bin/tool(toolbox)이 같은 네트워크에서 동작한다.
+set -euo pipefail
+here="$(cd "$(dirname "$0")/.." && pwd)"
+export DEMO_APP_SRC="${DEMO_APP_SRC:-$HOME/workspace/jackal-demo-app}"
+[[ -f "$DEMO_APP_SRC/go.mod" ]] || { echo "데모 앱 저장소가 없습니다: $DEMO_APP_SRC (DEMO_APP_SRC로 지정)" >&2; exit 1; }
+exec docker compose -p cdc-poc -f "$here/../cdc/docker-compose.yml" -f "$here/compose.yml" "$@"

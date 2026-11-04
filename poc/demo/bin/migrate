@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# 앱과 DB를 한 번에 옮긴다. Phase A: 트래픽 env-a → env-b, app-a 종료. Phase B: DB pg-a → pg-b 전환.
+# 사용법: bin/migrate            (bin/prepare 직후 상태에서)
+#         SPLIT_SEC=10 bin/migrate   50:50으로 섞어 두는 시간 (기본 5초)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# PoC의 bin/tool은 poc/cdc Compose만 보므로 데모 컨테이너를 orphan으로 경고한다
+export COMPOSE_IGNORE_ORPHANS=true
+step() { printf '\n\033[1m[%s] ▶ %s\033[0m\n' "$(date +%T)" "$*"; }
+
+step "Phase A: 트래픽 50:50"
+bin/weight 50 50
+sleep "${SPLIT_SEC:-5}"
+step "Phase A: 트래픽 전부 env-b"
+bin/weight 0 100
+sleep 3
+step "Phase A: app-a 종료 (drain 후)"
+bin/demo stop app-a 2>&1 | tail -1
+
+step "Phase B: DB 전환 pg-a → pg-b"
+../cdc/bin/tool 05_switchover.sh pg-a pg-b
+
+step "완료"
+curl -s "localhost:${DEMO_PORT:-8090}/api/stats"; echo

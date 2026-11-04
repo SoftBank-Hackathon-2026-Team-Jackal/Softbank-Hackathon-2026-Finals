@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# bin/migrate를 되돌린다. DB pg-b → pg-a (역방향 복제 이용), 앱 env-b → env-a.
+# 끝나면 다시 bin/migrate를 실행할 수 있는 상태가 된다 (pg-a → pg-b 복제가 다시 살아 있음).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# PoC의 bin/tool은 poc/cdc Compose만 보므로 데모 컨테이너를 orphan으로 경고한다
+export COMPOSE_IGNORE_ORPHANS=true
+step() { printf '\n\033[1m[%s] ▶ %s\033[0m\n' "$(date +%T)" "$*"; }
+
+step "DB 되돌리기 pg-b → pg-a"
+../cdc/bin/tool 06_rollback.sh pg-a
+step "app-a 시작"
+bin/demo start app-a 2>&1 | tail -1
+# HAProxy 헬스 체크(1초 간격, 2회 성공)가 app-a를 UP으로 볼 때까지 기다린다
+until printf 'show servers state app\n' | nc -w 1 127.0.0.1 "${HAPROXY_RUNTIME_PORT:-9999}" | awk '$4=="app-a" {exit !($6==2)}'; do sleep 0.5; done
+step "트래픽 50:50"
+bin/weight 50 50
+sleep "${SPLIT_SEC:-5}"
+step "트래픽 전부 env-a"
+bin/weight 100 0
+step "완료"
+curl -s "localhost:${DEMO_PORT:-8090}/api/stats"; echo
