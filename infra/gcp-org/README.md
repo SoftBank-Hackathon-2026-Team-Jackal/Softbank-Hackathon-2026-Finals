@@ -7,7 +7,7 @@ GCP 조직(`soulee.dev`) 아래의 폴더, 프로젝트, 조직 정책, 예산, 
 | 스택 | 실행 계정 | 관리하는 것 |
 |---|---|---|
 | `bootstrap/` | `admin@soulee.dev` | 조직 관리자의 `orgpolicy.policyAdmin`, 도메인 제한 정책 해제, `alus20x@gmail.com`의 조직 역할 |
-| `.` (이 디렉터리) | `alus20x@gmail.com` | 폴더 `prod`와 `sandbox`, 프로젝트 `sbh26-prod`와 `sbh26-sandbox`, API, 리전 제한 정책, 예산, 팀원 Editor |
+| `.` (이 디렉터리) | `alus20x@gmail.com` | 폴더 `prod`와 `sandbox`, 프로젝트 `sbh26-prod`와 `sbh26-sandbox`, API, 리전 제한 정책, 예산, 팀원 Editor와 Project IAM Admin |
 
 조직 관리자 계정은 부트스트랩과 비상시에만 씁니다. state는 두 스택 모두 AWS 관리 계정의 org state 버킷(`gcp-org/` 키)에 있으므로, 실행할 때 AWS `mgmt` 프로필도 로그인되어 있어야 합니다.
 

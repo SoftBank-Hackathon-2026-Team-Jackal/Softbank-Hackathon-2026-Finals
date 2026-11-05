@@ -19,6 +19,6 @@ variable "budget_amounts" {
 }
 
 variable "team_members" {
-  description = "프로젝트 Editor를 받을 팀원. 형식은 user:<이메일>"
+  description = "프로젝트 Editor와 Project IAM Admin을 받을 팀원. 형식은 user:<이메일>"
   type        = list(string)
 }
