@@ -1,7 +1,3 @@
-output "account_ids" {
-  value = { for k, v in aws_organizations_account.this : k => v.id }
-}
-
 output "sso_start_url" {
   value = "https://${local.identity_store_id}.awsapps.com/start"
 }
