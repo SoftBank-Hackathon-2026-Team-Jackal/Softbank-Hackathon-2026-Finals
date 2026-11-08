@@ -1,6 +1,6 @@
 # org
 
-AWS 조직, OU, 계정, SCP, Identity Center, 예산, 조직 CloudTrail을 관리하는 스택입니다. 구조와 결정 배경은 [클라우드 계정 구조](../../notes/cloud-structure.md)에 있습니다.
+AWS 조직, OU, SCP, Identity Center를 관리하는 스택입니다. 워크로드 계정, 예산, 조직 CloudTrail은 2026-11-08에 정리했습니다(아래 "정리 기록" 참고). 구조와 결정 배경은 [클라우드 계정 구조](../../notes/cloud-structure.md)에 있습니다.
 
 예선 저장소 `one-tatchi-platform`의 `org/`를 바탕으로 작성했습니다.
 
@@ -9,11 +9,8 @@ AWS 조직, OU, 계정, SCP, Identity Center, 예산, 조직 CloudTrail을 관�
 | 파일 | 내용 |
 |---|---|
 | `organization.tf` | 조직, 신뢰 서비스(CloudTrail, IAM, SSO), 멤버 계정 루트 자격 증명 중앙 관리, OU 3개 |
-| `accounts.tf` | 워크로드 계정 `platform`, `prod`, `sandbox` (각 OU에 하나씩) |
 | `scp.tf` | `baseline-guardrails`(모든 OU), `sandbox-guardrails`(sandbox OU) |
-| `sso.tf` | 권한 세트(`AdministratorAccess`, `ReadOnlyAccess`), 사용자, 그룹, 계정 할당 |
-| `budgets.tf` | 계정별 월 예산 알림 (크레딧을 뺀 금액 기준) |
-| `cloudtrail.tf` | 조직 CloudTrail과 로그 버킷 (90일 보관) |
+| `sso.tf` | 권한 세트(`AdministratorAccess`, `ReadOnlyAccess`), 사용자, 그룹, 관리 계정 할당 |
 | `state.tf`, `backend.tf` | 이 스택의 state 버킷과 S3 백엔드 |
 
 ## 계정과 CLI 프로필
@@ -21,9 +18,8 @@ AWS 조직, OU, 계정, SCP, Identity Center, 예산, 조직 CloudTrail을 관�
 | 계정 | CLI 프로필 | 접근 |
 |---|---|---|
 | 관리 계정 | `mgmt` | 조직 관리자(`soul.lee`)만 |
-| `platform` | `platform` | `admin`, `readonly` 그룹 |
-| `prod` | `prod` | `admin`, `readonly` 그룹 (Executor가 생기면 admin을 비상용으로 줄일 예정) |
-| `sandbox` | `sandbox` | `admin`, `readonly` 그룹 |
+
+워크로드 계정 `platform`, `prod`, `sandbox`는 닫혔으므로 해당 CLI 프로필은 더 이상 쓸 수 없습니다.
 
 SSO 포털 주소는 `terraform output sso_start_url`로 확인합니다.
 
@@ -52,7 +48,7 @@ API가 없어 콘솔에서 바꾼 값입니다. 바꾸면 이 표도 함께 고�
 
 ## 팀원 추가
 
-`team.auto.tfvars`의 `users`에 항목을 추가하고 `terraform apply`를 실행합니다. `role`에는 `admin` 또는 `readonly`를 씁니다. username(키)을 바꾸면 사용자를 지우고 새로 만드므로 주의합니다.
+`team.auto.tfvars`의 `users`에 항목을 추가하고 `terraform apply`를 실행합니다. `role`에는 `admin` 또는 `readonly`를 씁니다. username(키)을 바꾸면 사용자를 지우고 새로 만드므로 주의합니다. 지금은 워크로드 계정이 없으므로, 사용자를 추가해도 접근할 수 있는 계정은 없습니다.
 
 ## 처음부터 다시 만들 때
 
@@ -62,6 +58,14 @@ API가 없어 콘솔에서 바꾼 값입니다. 바꾸면 이 표도 함께 고�
 4. `terraform init`, `terraform plan`, `terraform apply`를 실행합니다.
 5. 주석을 풀고 `terraform init -migrate-state`로 state를 S3로 옮깁니다.
 
-## 정리 (해커톤 종료 시)
+## 정리 기록 (2026-11-08)
 
-`accounts.tf`의 `prevent_destroy`를 풀고 `terraform destroy`를 실행하면 계정이 닫힙니다. 닫힌 계정은 90일 동안 정지 상태로 남습니다.
+해커톤 본선이 끝난 뒤, 대상을 지정한 `terraform destroy`와 `apply`로 아래 리소스를 삭제하고 코드에서도 지웠습니다.
+
+- 워크로드 계정 `platform`(367123691646), `prod`(714066696240), `sandbox`(608379566120): 닫혀서 SUSPENDED 상태입니다. 2027-02-06 무렵까지는 AWS Support를 통해 다시 열 수 있고, 같은 이메일은 다시 쓸 수 없습니다.
+- 계정별 예산, 조직 CloudTrail과 로그 버킷
+- 워크로드 계정에 대한 그룹 할당, 팀원 SSO 사용자 3명
+
+남긴 것은 조직, OU, SCP, Identity Center(조직 관리자 `soul.lee`와 관리 계정 할당, 권한 세트, 그룹), 이 스택의 state 버킷입니다. 관리 계정에 로그인할 수 있으므로 Cost Explorer에서 닫힌 계정의 그동안 비용도 계속 확인할 수 있습니다.
+
+다시 만들어야 하면 정리 직전 커밋(`8e778fe`)의 `accounts.tf`, `budgets.tf`, `cloudtrail.tf`와 `sso.tf`의 계정 할당 코드를 참고합니다.

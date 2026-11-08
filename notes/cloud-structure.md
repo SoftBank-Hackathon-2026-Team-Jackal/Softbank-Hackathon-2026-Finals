@@ -3,6 +3,8 @@
 > 관련 문서: [MVP 설계](./mvp.md) · [CDC 설계](./cdc.md) · [접속 안내 (팀원용)](./cloud-access.md)
 > 출발점: 예선 저장소 `one-tatchi-platform`의 `org/` Terraform과 ADR-0001(AWS 계정 구조와 팀 접근 방식)
 
+> **정리 (2026-11-08):** 해커톤 본선이 끝나서 AWS 워크로드 계정(`platform`, `prod`, `sandbox`)을 닫고, GCP 프로젝트(`sbh26-prod`, `sbh26-sandbox`)를 삭제했습니다. 팀원의 SSO 사용자와 GCP 권한도 삭제했으므로 이 문서에 적힌 계정과 프로젝트는 더 이상 유효하지 않습니다. 남아 있는 것은 [`infra/org`](../infra/org/README.md)와 [`infra/gcp-org`](../infra/gcp-org/README.md)의 README에 정리했습니다.
+
 ---
 
 ## 1. 결정 요약

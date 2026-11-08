@@ -2,6 +2,8 @@
 
 > 관련 문서: [클라우드 계정 구조](./cloud-structure.md) · [작업 기록](./2026-11-03-cloud-setup-log.md)
 
+> **정리 (2026-11-08):** 해커톤 본선이 끝나서 AWS 워크로드 계정(`platform`, `prod`, `sandbox`)을 닫고, GCP 프로젝트(`sbh26-prod`, `sbh26-sandbox`)를 삭제했습니다. 팀원의 SSO 사용자와 GCP 권한도 삭제했으므로 이 문서의 접속 방법는 더 이상 유효하지 않습니다. 남아 있는 것은 [`infra/org`](../infra/org/README.md)와 [`infra/gcp-org`](../infra/gcp-org/README.md)의 README에 정리했습니다.
+
 팀원이 자기 계정으로 AWS와 GCP의 콘솔과 CLI를 쓰는 방법을 설명합니다. 두 클라우드 모두 **장기 키(AWS 액세스 키, GCP 서비스 계정 키)를 쓰지 않습니다.** AWS는 IAM Identity Center(SSO), GCP는 각자의 Google 계정으로 로그인합니다.
 
 ---

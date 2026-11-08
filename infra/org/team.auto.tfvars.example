@@ -1,16 +1,5 @@
 # 실제 값은 조직 관리자 로컬의 team.auto.tfvars에 둡니다(커밋하지 않음). 이 파일은 이메일을 가린 사본입니다.
 
-account_emails = {
-  platform = "<redacted>+platform@gmail.com"
-  prod     = "<redacted>+prod@gmail.com"
-  sandbox  = "<redacted>+sandbox@gmail.com"
-}
-
 users = {
-  "soul.lee"        = { given_name = "Soul", family_name = "Lee", email = "<redacted>", role = "admin" }
-  "seungcheol.park" = { given_name = "Seungcheol", family_name = "Park", email = "<redacted>", role = "admin" }
-  "minseo.kim"      = { given_name = "Minseo", family_name = "Kim", email = "<redacted>", role = "admin" }
-  "sangheon.lee"    = { given_name = "Sangheon", family_name = "Lee", email = "<redacted>", role = "admin" }
+  "soul.lee" = { given_name = "Soul", family_name = "Lee", email = "<redacted>", role = "admin" }
 }
-
-budget_emails = ["<redacted>"]
